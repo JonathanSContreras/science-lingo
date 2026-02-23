@@ -32,6 +32,7 @@ Science Lingo is a weekly science review platform where students log in, complet
 - [x] Streak tracking — weekly streak, upserted on session complete
 - [x] Badge system — auto-awarded: `first_session`, `perfectionist`, `on_fire`, `veteran`, `science_brain`
 - [x] AI Chatbot (Gemini Flash) — floating drawer on session page, topic-scoped, history-aware, 2–4 sentence responses
+- [x] AI Mini Lesson — Gemini-generated lesson shown before quiz starts; hook + 3–4 concept cards + quiz tip; graceful error fallback (`/api/lesson`, `MiniLesson.tsx`, phase state in `QuizClient.tsx`)
 - [x] Landing page (`/`) — hero, features grid, how it works, level ladder, AI tutor callout, final CTA
 - [x] `leaderboard` Supabase view — columns: `student_id, name, avatar, class_section, overall_accuracy, xp, streak_weeks, rank`
 - [x] `profiles` table — `class_section` (8A–8F, null for teachers) and `student_number` (unique, null for teachers) columns
@@ -47,6 +48,7 @@ Science Lingo is a weekly science review platform where students log in, complet
 - **No email confirmations:** `admin.auth.admin.createUser({ email_confirm: true })` — zero emails ever sent. Requires `SUPABASE_SERVICE_ROLE_KEY` in `.env.local` (server-side only, never exposed to client).
 - **Teacher accounts:** must be created manually in Supabase Auth dashboard + insert a profile row with `role = 'teacher'`. No teacher signup flow exists in the app.
 - **Section filtering:** server-side via `?section=8A` searchParams — no client state needed. Both `/leaderboard` and `/teacher` support this pattern.
+- **next.config.mjs:** `output: 'export'` was removed — it's incompatible with API routes, middleware, and Supabase auth cookies. Deploy to Vercel/Netlify (not GitHub Pages).
 
 --
 

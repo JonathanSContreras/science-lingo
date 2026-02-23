@@ -8,6 +8,7 @@ import {
 } from 'lucide-react'
 import { recordAnswer, completeSession } from './actions'
 import { ChatBot } from './ChatBot'
+import { MiniLesson } from './MiniLesson'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -49,6 +50,7 @@ export function QuizClient({
 })
  {
   const router = useRouter()
+  const [phase, setPhase]                   = useState<'lesson' | 'quiz'>('lesson')
   const [currentIndex, setCurrentIndex]     = useState(0)
   const [selectedOption, setSelectedOption] = useState<OptionKey | null>(null)
   const [hasAnswered, setHasAnswered]       = useState(false)
@@ -123,6 +125,15 @@ export function QuizClient({
   }
 
   // ── Render ─────────────────────────────────────────────────────────────────
+
+  if (phase === 'lesson') {
+    return (
+      <MiniLesson
+        topic={topic}
+        onComplete={() => setPhase('quiz')}
+      />
+    )
+  }
 
   return (
     <main className="min-h-screen bg-[#060c18] flex flex-col max-w-lg mx-auto">
