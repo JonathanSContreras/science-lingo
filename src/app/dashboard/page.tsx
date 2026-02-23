@@ -235,9 +235,6 @@ export default async function DashboardPage() {
                     <span className={`flex-1 text-sm font-semibold truncate ${isMe ? 'text-teal-300' : 'text-slate-200'}`}>
                       {entry.name}{isMe ? ' (you)' : ''}
                     </span>
-                    <span className="text-xs text-slate-400 font-mono tabular-nums">
-                      {Number(entry.overall_accuracy).toFixed(1)}%
-                    </span>
                     <span className="text-xs text-teal-500 font-bold tabular-nums">
                       ⚡{entry.xp}
                     </span>

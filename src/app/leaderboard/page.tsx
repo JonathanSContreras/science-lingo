@@ -117,7 +117,7 @@ export default async function LeaderboardPage({
           <div>
             <h1 className="text-xl font-black">{sectionLabel} Leaderboard</h1>
             <p className="text-xs text-slate-500">
-              {myRank ? `You're ranked #${myRank}` : 'Ranked by overall accuracy'}
+              {myRank ? `You're ranked #${myRank}` : 'Ranked by XP and performance'}
             </p>
           </div>
         </div>
@@ -174,8 +174,8 @@ export default async function LeaderboardPage({
                   {top3[1].name.split(' ')[0]}
                 </p>
                 <div className="w-full h-16 bg-slate-700 rounded-xl flex flex-col items-center justify-center">
-                  <span className="text-sm font-black text-white">{Number(top3[1].overall_accuracy).toFixed(1)}%</span>
-                  <span className="text-xs text-slate-400">⚡{top3[1].xp}</span>
+                  {isTeacher && <span className="text-sm font-black text-white">{Number(top3[1].overall_accuracy).toFixed(1)}%</span>}
+                  <span className={`font-bold ${isTeacher ? 'text-xs text-slate-400' : 'text-sm text-white'}`}>⚡{top3[1].xp}</span>
                 </div>
               </div>
 
@@ -189,8 +189,8 @@ export default async function LeaderboardPage({
                   {top3[0].name.split(' ')[0]}
                 </p>
                 <div className="w-full h-24 bg-gradient-to-t from-amber-700 to-amber-500 rounded-xl flex flex-col items-center justify-center shadow-lg shadow-amber-500/20">
-                  <span className="text-sm font-black text-slate-900">{Number(top3[0].overall_accuracy).toFixed(1)}%</span>
-                  <span className="text-xs text-amber-900/80 font-bold">⚡{top3[0].xp}</span>
+                  {isTeacher && <span className="text-sm font-black text-slate-900">{Number(top3[0].overall_accuracy).toFixed(1)}%</span>}
+                  <span className={`font-bold ${isTeacher ? 'text-xs text-amber-900/80' : 'text-sm text-slate-900'}`}>⚡{top3[0].xp}</span>
                 </div>
               </div>
 
@@ -204,8 +204,8 @@ export default async function LeaderboardPage({
                   {top3[2].name.split(' ')[0]}
                 </p>
                 <div className="w-full h-12 bg-slate-600 rounded-xl flex flex-col items-center justify-center">
-                  <span className="text-sm font-black text-white">{Number(top3[2].overall_accuracy).toFixed(1)}%</span>
-                  <span className="text-xs text-slate-400">⚡{top3[2].xp}</span>
+                  {isTeacher && <span className="text-sm font-black text-white">{Number(top3[2].overall_accuracy).toFixed(1)}%</span>}
+                  <span className={`font-bold ${isTeacher ? 'text-xs text-slate-400' : 'text-sm text-white'}`}>⚡{top3[2].xp}</span>
                 </div>
               </div>
 
@@ -219,7 +219,7 @@ export default async function LeaderboardPage({
             <span className="w-7 text-xs text-slate-600 font-bold">#</span>
             <span className="flex-1 text-xs text-slate-600 font-bold uppercase tracking-wider">Student</span>
             <div className="flex items-center gap-4 text-xs text-slate-600 font-bold uppercase tracking-wider">
-              <span className="flex items-center gap-1"><Target size={10} />Acc</span>
+              {isTeacher && <span className="flex items-center gap-1"><Target size={10} />Acc</span>}
               <span className="flex items-center gap-1"><Zap size={10} />XP</span>
               <span className="flex items-center gap-1"><Flame size={10} />Str</span>
             </div>
@@ -280,9 +280,11 @@ export default async function LeaderboardPage({
 
                   {/* Stats */}
                   <div className="flex items-center gap-4 flex-shrink-0">
-                    <span className="text-xs font-black text-white tabular-nums w-10 text-right">
-                      {Number(entry.overall_accuracy).toFixed(1)}%
-                    </span>
+                    {isTeacher && (
+                      <span className="text-xs font-black text-white tabular-nums w-10 text-right">
+                        {Number(entry.overall_accuracy).toFixed(1)}%
+                      </span>
+                    )}
                     <span className="text-xs font-bold text-amber-400 tabular-nums w-10 text-right">
                       {entry.xp.toLocaleString()}
                     </span>
