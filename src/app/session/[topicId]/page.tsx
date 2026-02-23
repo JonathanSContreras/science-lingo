@@ -4,11 +4,16 @@ import { QuizClient } from './QuizClient'
 
 export default async function SessionPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ topicId: string }>
+  searchParams: Promise<{ mode?: string }>
 }) {
-  const { topicId } = await params
-  const supabase    = await createClient()
+  const { topicId }      = await params
+  const { mode: modeParam } = await searchParams
+  const mode = (modeParam === 'practice' ? 'practice' : 'competition') as 'practice' | 'competition'
+
+  const supabase = await createClient()
 
   // ── Auth ──
   const { data: { user } } = await supabase.auth.getUser()
@@ -22,8 +27,8 @@ export default async function SessionPage({
 
   if (profile?.role === 'teacher') redirect('/teacher')
 
-  // ── Topic + questions ──
-  const [topicRes, questionsRes] = await Promise.all([
+  // ── Topic + questions + student XP ──
+  const [topicRes, questionsRes, statsRes] = await Promise.all([
     supabase
       .from('topics')
       .select('id, title, standard, description')
@@ -34,20 +39,54 @@ export default async function SessionPage({
       .select('id, question_text, option_a, option_b, option_c, option_d, correct_option, explanation, hint, order_index')
       .eq('topic_id', topicId)
       .order('order_index'),
+    supabase
+      .from('student_stats')
+      .select('xp')
+      .eq('user_id', user.id)
+      .maybeSingle(),
   ])
 
-  const topic     = topicRes.data
-  const questions = questionsRes.data
+  const topic      = topicRes.data
+  const questions  = questionsRes.data
+  const studentXp  = statsRes.data?.xp ?? 0
 
-  if (!topic)                         redirect('/dashboard')
+  if (!topic)                              redirect('/dashboard')
   if (!questions || questions.length === 0) redirect('/dashboard')
 
-  // ── Session: reuse an in-progress one or create a new one ──
+  // ── Competition: redirect if already completed ──
+  if (mode === 'competition') {
+    const { data: completedCompetition } = await supabase
+      .from('sessions')
+      .select('id')
+      .eq('student_id', user.id)
+      .eq('topic_id', topicId)
+      .eq('session_type', 'competition')
+      .eq('is_complete', true)
+      .maybeSingle()
+
+    if (completedCompetition) {
+      redirect(`/session/summary?session=${completedCompetition.id}`)
+    }
+  }
+
+  // ── Shuffle questions for competition (server-side, one-time) ──
+  const orderedQuestions = (() => {
+    if (mode !== 'competition') return questions
+    const shuffled = [...questions]
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1)) // eslint-disable-line react-hooks/purity
+      ;[shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
+    }
+    return shuffled
+  })()
+
+  // ── Session: reuse an in-progress same-type session or create a new one ──
   const { data: existingSession } = await supabase
     .from('sessions')
     .select('id')
     .eq('student_id', user.id)
     .eq('topic_id', topicId)
+    .eq('session_type', mode)
     .eq('is_complete', false)
     .order('started_at', { ascending: false })
     .limit(1)
@@ -67,6 +106,7 @@ export default async function SessionPage({
         is_complete:     false,
         correct_answers: 0,
         total_attempts:  0,
+        session_type:    mode,
       })
       .select('id')
       .single()
@@ -83,7 +123,9 @@ export default async function SessionPage({
     <QuizClient
       sessionId={sessionId}
       topic={topic}
-      questions={questions}
+      questions={orderedQuestions}
+      mode={mode}
+      studentXp={studentXp}
     />
   )
 }

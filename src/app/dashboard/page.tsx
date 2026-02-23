@@ -84,6 +84,22 @@ export default async function DashboardPage() {
   // Teacher goes to their own dashboard
   if (profile.role === 'teacher') redirect('/teacher')
 
+  // Check if student already completed the competition round for the active topic
+  let competitionDone = false
+  let competitionSessionId: string | null = null
+  if (topic) {
+    const { data: compSession } = await supabase
+      .from('sessions')
+      .select('id')
+      .eq('student_id', user.id)
+      .eq('topic_id', topic.id)
+      .eq('session_type', 'competition')
+      .eq('is_complete', true)
+      .maybeSingle()
+    competitionDone      = !!compSession
+    competitionSessionId = compSession?.id ?? null
+  }
+
   const xp       = stats?.xp ?? 0
   const accuracy = Number(stats?.overall_accuracy ?? 0)
   const streak   = stats?.streak_weeks ?? 0
@@ -176,14 +192,34 @@ export default async function DashboardPage() {
             {topic.description && (
               <p className="text-sm text-slate-400 leading-relaxed mb-5">{topic.description}</p>
             )}
-            <Link
-              href={`/session/${topic.id}`}
-              className="inline-flex items-center gap-2 bg-teal-500 hover:bg-teal-400 active:scale-95 text-slate-900 font-black text-sm px-5 py-3 rounded-2xl transition-all shadow-lg shadow-teal-500/20"
-            >
-              <Zap size={14} className="fill-slate-900" />
-              Start Session
-              <ChevronRight size={14} />
-            </Link>
+            <div className="flex gap-2">
+              {/* Practice — unlimited, no XP */}
+              <Link
+                href={`/session/${topic.id}?mode=practice`}
+                className="inline-flex items-center gap-1.5 bg-slate-700 hover:bg-slate-600 active:scale-95 text-slate-200 font-bold text-sm px-4 py-3 rounded-2xl transition-all border border-slate-600/60"
+              >
+                🔬 Practice
+              </Link>
+
+              {/* Competition — one shot, earns XP */}
+              {competitionDone ? (
+                <Link
+                  href={`/session/summary?session=${competitionSessionId}`}
+                  className="inline-flex items-center gap-1.5 bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 font-bold text-sm px-4 py-3 rounded-2xl transition-all"
+                >
+                  ✓ Competition Done
+                </Link>
+              ) : (
+                <Link
+                  href={`/session/${topic.id}?mode=competition`}
+                  className="inline-flex items-center gap-1.5 bg-amber-500 hover:bg-amber-400 active:scale-95 text-slate-900 font-black text-sm px-4 py-3 rounded-2xl transition-all shadow-lg shadow-amber-500/20"
+                >
+                  <Zap size={14} className="fill-slate-900" />
+                  Competition
+                  <ChevronRight size={14} />
+                </Link>
+              )}
+            </div>
           </div>
         ) : (
           <div className="bg-slate-900/70 border border-slate-800 rounded-3xl p-6 text-center">

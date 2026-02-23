@@ -4,11 +4,9 @@ import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   FlaskConical, Flame, ChevronRight,
-  CheckCircle2, XCircle, Lightbulb,
+  CheckCircle2, XCircle, Lightbulb, Shield, Zap,
 } from 'lucide-react'
-import { recordAnswer, completeSession } from './actions'
-import { ChatBot } from './ChatBot'
-import { MiniLesson } from './MiniLesson'
+import { recordAnswer, completeSession, purchasePowerUps } from './actions'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -37,20 +35,29 @@ type Topic = {
 const OPTION_LABELS = ['A', 'B', 'C', 'D'] as const
 const OPTION_KEYS: OptionKey[] = ['option_a', 'option_b', 'option_c', 'option_d']
 
+const POWER_UPS = [
+  { id: 'fifty_fifty',   emoji: '🔍', name: '50/50',         cost: 75,  desc: 'Eliminate 2 wrong options on one question' },
+  { id: 'hint_pass',     emoji: '💡', name: 'Hint Pass',     cost: 50,  desc: 'Unlock hints for all questions' },
+  { id: 'streak_shield', emoji: '🛡️', name: 'Streak Shield', cost: 100, desc: 'Preserve your streak if you missed last week' },
+]
+
 // ─── Component ──────────────────────────────────────────────────────────────
 
 export function QuizClient({
   sessionId,
   topic,
   questions,
+  mode,
+  studentXp,
 }: {
   sessionId: string
   topic: Topic
   questions: Question[]
-})
- {
+  mode: 'practice' | 'competition'
+  studentXp: number
+}) {
   const router = useRouter()
-  const [phase, setPhase]                   = useState<'lesson' | 'quiz'>('lesson')
+  const [confirmed, setConfirmed]           = useState(mode === 'practice')
   const [currentIndex, setCurrentIndex]     = useState(0)
   const [selectedOption, setSelectedOption] = useState<OptionKey | null>(null)
   const [hasAnswered, setHasAnswered]       = useState(false)
@@ -58,30 +65,70 @@ export function QuizClient({
   const [showHint, setShowHint]             = useState(false)
   const [isPending, startTransition]        = useTransition()
 
-  const currentQuestion  = questions[currentIndex]
-  const totalQuestions   = questions.length
-  const isLastQuestion   = currentIndex === totalQuestions - 1
-  const progressPercent  = Math.round((currentIndex / totalQuestions) * 100)
-  const correctKey       = `option_${currentQuestion.correct_option}` as OptionKey
-  const isCorrect        = hasAnswered && selectedOption === correctKey
+  // Power-up shop state (pre-purchase selections)
+  const [selectedPowerUps, setSelectedPowerUps] = useState<string[]>([])
+
+  // Power-up game state (set after purchase confirmed)
+  const [purchasedPowerUps, setPurchasedPowerUps] = useState<string[]>([])
+  const [fiftyFiftyUsed, setFiftyFiftyUsed]       = useState(false)
+  const [eliminatedOptions, setEliminatedOptions] = useState<OptionKey[]>([])
+  const [xpAfterPurchase, setXpAfterPurchase]     = useState(studentXp)
+
+  const currentQuestion = questions[currentIndex]
+  const totalQuestions  = questions.length
+  const isLastQuestion  = currentIndex === totalQuestions - 1
+  const progressPercent = Math.round((currentIndex / totalQuestions) * 100)
+  const correctKey      = `option_${currentQuestion.correct_option}` as OptionKey
+  const isCorrect       = hasAnswered && selectedOption === correctKey
+
+  // Shop cost calculation
+  const totalCost   = selectedPowerUps.reduce((sum, id) => sum + (POWER_UPS.find((p) => p.id === id)?.cost ?? 0), 0)
+  const xpRemaining = xpAfterPurchase - totalCost
 
   // ── Handlers ───────────────────────────────────────────────────────────────
 
   function handleSelectOption(key: OptionKey) {
-    if (hasAnswered) return
+    if (hasAnswered || isPending || eliminatedOptions.includes(key)) return
     setSelectedOption(key)
   }
 
+  function handleFiftyFifty() {
+    const wrongKeys = OPTION_KEYS.filter((k) => k !== correctKey)
+    // Fisher-Yates shuffle, then take first 2
+    for (let i = wrongKeys.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1))
+      ;[wrongKeys[i], wrongKeys[j]] = [wrongKeys[j], wrongKeys[i]]
+    }
+    const toEliminate = wrongKeys.slice(0, 2)
+    setEliminatedOptions(toEliminate)
+    setFiftyFiftyUsed(true)
+    // Clear selected option if it got eliminated
+    if (selectedOption && toEliminate.includes(selectedOption)) {
+      setSelectedOption(null)
+    }
+  }
+
+  function handleReady() {
+    if (selectedPowerUps.length > 0) {
+      startTransition(async () => {
+        const result = await purchasePowerUps(sessionId, selectedPowerUps)
+        if ('newXp' in result) {
+          setPurchasedPowerUps(selectedPowerUps)
+          setXpAfterPurchase(result.newXp ?? studentXp)
+        }
+        setConfirmed(true)
+      })
+    } else {
+      setConfirmed(true)
+    }
+  }
+
+  // Practice: two-step — check answer → see feedback → next
   function handleCheckAnswer() {
     if (!selectedOption || hasAnswered || isPending) return
-
-    const correct        = selectedOption === correctKey
-    const newCorrectCount = correctAnswers + (correct ? 1 : 0)
-
+    const correct = selectedOption === correctKey
     setHasAnswered(true)
-    setCorrectAnswers(newCorrectCount)
-
-    // Fire-and-forget: record in DB; "Next" button is disabled while pending
+    setCorrectAnswers((c) => c + (correct ? 1 : 0))
     startTransition(async () => {
       await recordAnswer(sessionId, currentQuestion.id, selectedOption, correct)
     })
@@ -89,14 +136,10 @@ export function QuizClient({
 
   function handleNext() {
     if (isPending) return
-
     if (isLastQuestion) {
-      // Complete session — correctAnswers already includes the last answer
       startTransition(async () => {
         const result = await completeSession(sessionId, correctAnswers, totalQuestions)
-        if (result.success) {
-          router.push(`/session/summary?session=${sessionId}`)
-        }
+        if (result.success) router.push(`/session/summary?session=${sessionId}`)
       })
     } else {
       setCurrentIndex((i) => i + 1)
@@ -106,10 +149,36 @@ export function QuizClient({
     }
   }
 
+  // Competition: single-step — submit → advance immediately, no feedback shown
+  function handleSubmitCompetition() {
+    if (!selectedOption || hasAnswered || isPending) return
+    const correct    = selectedOption === correctKey
+    const newCorrect = correctAnswers + (correct ? 1 : 0)
+    setHasAnswered(true)
+    startTransition(async () => {
+      await recordAnswer(sessionId, currentQuestion.id, selectedOption, correct)
+      if (isLastQuestion) {
+        const result = await completeSession(sessionId, newCorrect, totalQuestions)
+        if (result.success) router.push(`/session/summary?session=${sessionId}`)
+      } else {
+        setCorrectAnswers(newCorrect)
+        setCurrentIndex((i) => i + 1)
+        setSelectedOption(null)
+        setHasAnswered(false)
+        setShowHint(false)
+        setEliminatedOptions([])
+      }
+    })
+  }
+
   // ── Option styling ─────────────────────────────────────────────────────────
 
   function getOptionClass(key: OptionKey) {
     const base = 'w-full flex items-center gap-3 p-4 rounded-2xl border-2 transition-all duration-200 text-left'
+    // Eliminated by 50/50
+    if (eliminatedOptions.includes(key)) {
+      return `${base} border-slate-800/30 bg-slate-900/30 text-slate-700 line-through cursor-not-allowed`
+    }
     if (!hasAnswered) {
       return `${base} ${
         selectedOption === key
@@ -117,23 +186,137 @@ export function QuizClient({
           : 'border-slate-700/60 bg-slate-800/50 text-slate-300 hover:border-slate-600 hover:bg-slate-800 active:scale-[0.99]'
       }`
     }
-    if (key === correctKey)
-      return `${base} border-emerald-500 bg-emerald-500/15 text-emerald-200`
-    if (key === selectedOption)
-      return `${base} border-red-500 bg-red-500/15 text-red-300`
+    if (mode === 'practice') {
+      if (key === correctKey)    return `${base} border-emerald-500 bg-emerald-500/15 text-emerald-200`
+      if (key === selectedOption) return `${base} border-red-500 bg-red-500/15 text-red-300`
+      return `${base} border-slate-700/30 bg-slate-800/30 text-slate-600`
+    }
+    // Competition: lock without revealing correct answer
+    if (key === selectedOption) return `${base} border-teal-500/40 bg-teal-500/8 text-slate-400`
     return `${base} border-slate-700/30 bg-slate-800/30 text-slate-600`
   }
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
-  // if (phase === 'lesson') {
-  //   return (
-  //     <MiniLesson
-  //       topic={topic}
-  //       onComplete={() => setPhase('quiz')}
-  //     />
-  //   )
-  // }
+  // Competition confirmation + power-up shop screen
+  if (!confirmed) {
+    return (
+      <main className="min-h-screen bg-[#060c18] flex flex-col items-center justify-center p-6 max-w-lg mx-auto">
+        <div className="w-full max-w-sm">
+
+          {/* Header */}
+          <div className="text-center mb-6">
+            <div className="text-6xl mb-4">🏆</div>
+            <h1 className="text-2xl font-black text-white mb-1">Competition Round</h1>
+            <p className="text-slate-400 text-sm mb-3">{topic.title}</p>
+            <div className="inline-flex items-center gap-1.5 bg-amber-500/15 border border-amber-500/30 text-amber-400 text-sm font-bold px-3 py-1.5 rounded-full">
+              <Zap size={14} />
+              {xpAfterPurchase.toLocaleString()} XP
+            </div>
+          </div>
+
+          {/* Rules */}
+          <div className="bg-slate-900/80 border border-amber-500/25 rounded-2xl p-4 mb-5 space-y-2.5 text-left">
+            <div className="flex items-start gap-3">
+              <span className="text-base mt-0.5">⚠️</span>
+              <p className="text-xs text-slate-300 leading-relaxed">
+                <span className="font-black text-amber-400">You can only take this once.</span>{' '}
+                Your score will be locked and ranked on the leaderboard.
+              </p>
+            </div>
+            <div className="flex items-start gap-3">
+              <span className="text-base mt-0.5">🔀</span>
+              <p className="text-xs text-slate-300 leading-relaxed">Questions are in a randomized order.</p>
+            </div>
+            <div className="flex items-start gap-3">
+              <span className="text-base mt-0.5">🚫</span>
+              <p className="text-xs text-slate-300 leading-relaxed">No feedback shown during the round.</p>
+            </div>
+          </div>
+
+          {/* Power-up shop */}
+          <div className="mb-5">
+            <h2 className="text-xs font-black text-slate-400 uppercase tracking-wider mb-3">Power-Ups</h2>
+            <div className="space-y-2.5">
+              {POWER_UPS.map((pu) => {
+                const isSelected = selectedPowerUps.includes(pu.id)
+                const canSelect  = isSelected || xpAfterPurchase - totalCost >= pu.cost
+                return (
+                  <button
+                    key={pu.id}
+                    onClick={() =>
+                      canSelect &&
+                      setSelectedPowerUps((prev) =>
+                        prev.includes(pu.id)
+                          ? prev.filter((p) => p !== pu.id)
+                          : [...prev, pu.id],
+                      )
+                    }
+                    disabled={!canSelect}
+                    className={`w-full flex items-center gap-3 p-3.5 rounded-2xl border-2 transition-all text-left ${
+                      isSelected
+                        ? 'border-amber-500 bg-amber-500/10 text-white'
+                        : canSelect
+                          ? 'border-slate-700/60 bg-slate-800/50 text-slate-300 hover:border-slate-600 active:scale-[0.99]'
+                          : 'border-slate-800/40 bg-slate-900/30 text-slate-600 cursor-not-allowed opacity-50'
+                    }`}
+                  >
+                    <span className="text-2xl">{pu.emoji}</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-bold">{pu.name}</div>
+                      <div className="text-xs text-slate-500 mt-0.5 leading-snug">{pu.desc}</div>
+                    </div>
+                    <div className={`flex items-center gap-0.5 text-xs font-black flex-shrink-0 ${isSelected ? 'text-amber-400' : 'text-slate-500'}`}>
+                      <Zap size={11} />
+                      {pu.cost}
+                    </div>
+                    {isSelected && <CheckCircle2 size={16} className="text-amber-400 flex-shrink-0" />}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
+          {/* Cost summary */}
+          {totalCost > 0 && (
+            <div className="bg-slate-900/60 border border-slate-800/60 rounded-xl px-4 py-2.5 mb-4 flex items-center justify-between text-xs">
+              <span className="text-slate-500">Total cost</span>
+              <span className="font-black text-amber-400 flex items-center gap-0.5">
+                <Zap size={10} /> {totalCost} XP
+              </span>
+              <span className="text-slate-600 mx-1">→</span>
+              <span className={`font-black flex items-center gap-0.5 ${xpRemaining >= 0 ? 'text-white' : 'text-red-400'}`}>
+                <Zap size={10} /> {xpRemaining} left
+              </span>
+            </div>
+          )}
+
+          <button
+            onClick={handleReady}
+            disabled={isPending}
+            className="w-full py-4 rounded-2xl bg-amber-500 hover:bg-amber-400 active:scale-[0.98] disabled:opacity-40 text-slate-900 font-black text-base transition-all shadow-lg shadow-amber-500/20 mb-3"
+          >
+            {isPending ? (
+              <span className="flex items-center justify-center gap-2">
+                <span className="w-4 h-4 border-2 border-slate-900/30 border-t-slate-900 rounded-full animate-spin" />
+                Purchasing…
+              </span>
+            ) : totalCost > 0 ? (
+              'Buy & Start 🚀'
+            ) : (
+              "I'm Ready — Let's Go 🚀"
+            )}
+          </button>
+          <a
+            href="/dashboard"
+            className="block text-sm text-center text-slate-600 hover:text-slate-400 transition-colors py-2"
+          >
+            Not ready yet — go back
+          </a>
+        </div>
+      </main>
+    )
+  }
 
   return (
     <main className="min-h-screen bg-[#060c18] flex flex-col max-w-lg mx-auto">
@@ -144,9 +327,17 @@ export function QuizClient({
           <FlaskConical size={16} className="text-teal-400 flex-shrink-0" />
           <span className="text-sm font-bold text-teal-400 truncate">{topic.title}</span>
         </div>
-        <div className="flex items-center gap-1.5 text-orange-400 flex-shrink-0 ml-3">
-          <Flame size={15} />
-          <span className="text-xs font-black">{currentIndex + 1}/{totalQuestions}</span>
+        <div className="flex items-center gap-2 flex-shrink-0 ml-3">
+          {mode === 'competition' && (
+            <div className="flex items-center gap-1 bg-amber-500/15 border border-amber-500/30 text-amber-400 text-xs font-bold px-2 py-1 rounded-lg">
+              <Shield size={11} />
+              Competition
+            </div>
+          )}
+          <div className="flex items-center gap-1.5 text-orange-400">
+            <Flame size={15} />
+            <span className="text-xs font-black">{currentIndex + 1}/{totalQuestions}</span>
+          </div>
         </div>
       </header>
 
@@ -172,8 +363,10 @@ export function QuizClient({
             {currentQuestion.question_text}
           </p>
 
-          {/* Hint */}
-          {currentQuestion.hint && !hasAnswered && (
+          {/* Hint — practice or hint_pass power-up */}
+          {(mode === 'practice' || purchasedPowerUps.includes('hint_pass')) &&
+            currentQuestion.hint &&
+            !hasAnswered && (
             <div className="mt-4">
               {!showHint ? (
                 <button
@@ -191,6 +384,21 @@ export function QuizClient({
               )}
             </div>
           )}
+
+          {/* 50/50 button — competition power-up, one-time use */}
+          {mode === 'competition' &&
+            purchasedPowerUps.includes('fifty_fifty') &&
+            !fiftyFiftyUsed &&
+            !hasAnswered && (
+            <div className="mt-3">
+              <button
+                onClick={handleFiftyFifty}
+                className="flex items-center gap-1.5 text-xs text-violet-400/70 hover:text-violet-400 transition-colors font-medium"
+              >
+                🔍 Use 50/50
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Answer options */}
@@ -199,39 +407,33 @@ export function QuizClient({
             <button
               key={key}
               onClick={() => handleSelectOption(key)}
-              disabled={hasAnswered}
+              disabled={hasAnswered || isPending || eliminatedOptions.includes(key)}
               className={getOptionClass(key)}
             >
-              {/* Label bubble */}
               <span className="w-8 h-8 rounded-xl bg-slate-700/70 flex items-center justify-center text-xs font-black flex-shrink-0">
                 {OPTION_LABELS[i]}
               </span>
-
-              {/* Text */}
-              <span className="text-sm font-medium leading-snug flex-1">
+              <span className={`text-sm font-medium leading-snug flex-1 ${eliminatedOptions.includes(key) ? 'line-through opacity-50' : ''}`}>
                 {currentQuestion[key]}
               </span>
-
-              {/* Status icon */}
-              {hasAnswered && key === correctKey && (
+              {/* Icons — practice only */}
+              {mode === 'practice' && hasAnswered && key === correctKey && (
                 <CheckCircle2 size={18} className="text-emerald-400 flex-shrink-0" />
               )}
-              {hasAnswered && key === selectedOption && key !== correctKey && (
+              {mode === 'practice' && hasAnswered && key === selectedOption && key !== correctKey && (
                 <XCircle size={18} className="text-red-400 flex-shrink-0" />
               )}
             </button>
           ))}
         </div>
 
-        {/* Feedback panel */}
-        {hasAnswered && (
-          <div
-            className={`rounded-2xl px-4 py-4 border ${
-              isCorrect
-                ? 'bg-emerald-500/10 border-emerald-500/25'
-                : 'bg-red-500/10 border-red-500/20'
-            }`}
-          >
+        {/* Feedback — practice only */}
+        {mode === 'practice' && hasAnswered && (
+          <div className={`rounded-2xl px-4 py-4 border ${
+            isCorrect
+              ? 'bg-emerald-500/10 border-emerald-500/25'
+              : 'bg-red-500/10 border-red-500/20'
+          }`}>
             <div className="flex items-center gap-2 mb-2">
               {isCorrect ? (
                 <>
@@ -250,44 +452,63 @@ export function QuizClient({
             </p>
           </div>
         )}
+
       </div>
 
       {/* ── Sticky bottom CTA ── */}
       <div className="px-4 pt-3 pb-8 flex-shrink-0 border-t border-slate-800/60 bg-[#060c18]">
-        {!hasAnswered ? (
-          <button
-            onClick={handleCheckAnswer}
-            disabled={!selectedOption || isPending}
-            className="w-full py-4 rounded-2xl bg-teal-500 hover:bg-teal-400 active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed text-slate-900 font-black text-base transition-all shadow-lg shadow-teal-500/20"
-          >
-            Check Answer
-          </button>
+
+        {mode === 'practice' ? (
+          // Practice: two-step flow
+          !hasAnswered ? (
+            <button
+              onClick={handleCheckAnswer}
+              disabled={!selectedOption || isPending}
+              className="w-full py-4 rounded-2xl bg-teal-500 hover:bg-teal-400 active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed text-slate-900 font-black text-base transition-all shadow-lg shadow-teal-500/20"
+            >
+              Check Answer
+            </button>
+          ) : (
+            <button
+              onClick={handleNext}
+              disabled={isPending}
+              className="w-full py-4 rounded-2xl bg-teal-500 hover:bg-teal-400 active:scale-[0.98] disabled:opacity-60 text-slate-900 font-black text-base transition-all shadow-lg shadow-teal-500/20 flex items-center justify-center gap-2"
+            >
+              {isPending ? (
+                <span className="flex items-center gap-2">
+                  <span className="w-4 h-4 border-2 border-slate-900/30 border-t-slate-900 rounded-full animate-spin" />
+                  {isLastQuestion ? 'Finishing…' : 'Saving…'}
+                </span>
+              ) : (
+                <>
+                  {isLastQuestion ? 'See Results 🎉' : 'Next Question'}
+                  {!isLastQuestion && <ChevronRight size={18} />}
+                </>
+              )}
+            </button>
+          )
         ) : (
+          // Competition: single-step — submit & advance, no feedback
           <button
-            onClick={handleNext}
-            disabled={isPending}
-            className="w-full py-4 rounded-2xl bg-teal-500 hover:bg-teal-400 active:scale-[0.98] disabled:opacity-60 text-slate-900 font-black text-base transition-all shadow-lg shadow-teal-500/20 flex items-center justify-center gap-2"
+            onClick={handleSubmitCompetition}
+            disabled={!selectedOption || isPending}
+            className="w-full py-4 rounded-2xl bg-amber-500 hover:bg-amber-400 active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed text-slate-900 font-black text-base transition-all shadow-lg shadow-amber-500/20 flex items-center justify-center gap-2"
           >
             {isPending ? (
               <span className="flex items-center gap-2">
                 <span className="w-4 h-4 border-2 border-slate-900/30 border-t-slate-900 rounded-full animate-spin" />
-                {isLastQuestion ? 'Finishing…' : 'Saving…'}
+                {isLastQuestion ? 'Finishing…' : 'Submitting…'}
               </span>
             ) : (
               <>
-                {isLastQuestion ? 'See Results 🎉' : 'Next Question'}
+                {isLastQuestion ? 'Finish Competition 🏆' : 'Submit Answer'}
                 {!isLastQuestion && <ChevronRight size={18} />}
               </>
             )}
           </button>
         )}
-      </div>
 
-      {/* ── AI Chatbot (floating, topic-scoped) ── */}
-      {/* <ChatBot
-        topicTitle={topic.title}
-        topicDescription={topic.description}
-      /> */}
+      </div>
 
     </main>
   )
