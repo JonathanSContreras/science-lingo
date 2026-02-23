@@ -3,13 +3,12 @@ import { createClient } from '@/lib/supabase/server'
 import Link from 'next/link'
 import {
   FlaskConical, Atom, Microscope, Rocket, Star,
-  Trophy, Flame, ArrowLeft, Target, Zap,
+  Trophy, Flame, ArrowLeft, Target, Zap, Calendar,
 } from 'lucide-react'
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
 const SECTIONS = ['8A', '8B', '8C', '8D', '8E', '8F'] as const
-type Section = typeof SECTIONS[number]
 
 const LEVELS = [
   { level: 1, title: 'Lab Intern',       xpRequired: 0 },
@@ -36,16 +35,36 @@ const AVATAR_ICONS: Record<string, React.ReactNode> = {
 
 const MEDALS = ['🥇', '🥈', '🥉']
 
+// ─── Week helpers ─────────────────────────────────────────────────────────────
+
+function getWeekStart(date: Date): Date {
+  const d = new Date(date)
+  const day = d.getUTCDay()                  // 0 = Sun
+  const diff = day === 0 ? -6 : 1 - day     // shift back to Monday
+  d.setUTCDate(d.getUTCDate() + diff)
+  d.setUTCHours(0, 0, 0, 0)
+  return d
+}
+
+function formatWeekRange(weekStart: Date): string {
+  const end = new Date(weekStart)
+  end.setUTCDate(end.getUTCDate() + 6)
+  const fmt = (d: Date) =>
+    d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })
+  return `${fmt(weekStart)} – ${fmt(end)}`
+}
+
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-type BoardEntry = {
-  student_id:       string
-  name:             string
-  avatar:           string
-  class_section:    string | null
-  overall_accuracy: number
-  xp:               number
-  streak_weeks:     number
+type DisplayEntry = {
+  student_id:        string
+  name:              string
+  avatar:            string
+  class_section:     string | null
+  streak_weeks:      number
+  xp:                number   // all-time XP (for level title + overall score)
+  weekly_xp:         number   // weekly XP (0 in overall view)
+  overall_accuracy?: number   // only in overall view
 }
 
 // ─── Page ────────────────────────────────────────────────────────────────────
@@ -53,9 +72,9 @@ type BoardEntry = {
 export default async function LeaderboardPage({
   searchParams,
 }: {
-  searchParams: Promise<{ section?: string }>
+  searchParams: Promise<{ section?: string; view?: string; week?: string }>
 }) {
-  const { section: sectionParam } = await searchParams
+  const { section: sectionParam, view: viewParam, week: weekParam } = await searchParams
 
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -69,33 +88,153 @@ export default async function LeaderboardPage({
 
   const isTeacher = profile?.role === 'teacher'
 
-  // Teacher: use ?section= param (default 'all')
-  // Student: always use their own section
+  // Teacher: ?section= param; Student: always their own section
   const activeSection: string = isTeacher
     ? (sectionParam ?? 'all')
     : (profile?.class_section ?? 'all')
 
-  // Build query — filter by section when applicable
-  const query = supabase
-    .from('leaderboard')
-    .select('student_id, name, avatar, class_section, overall_accuracy, xp, streak_weeks')
-    .order('overall_accuracy', { ascending: false })
-    .order('xp', { ascending: false })
+  // Teachers can toggle views; students always see weekly
+  const viewMode: 'week' | 'overall' =
+    isTeacher && viewParam === 'overall' ? 'overall' : 'week'
 
-  const { data: board } = activeSection !== 'all'
-    ? await query.eq('class_section', activeSection)
-    : await query
+  // Week selection (teachers can pick; students always current week)
+  const currentWeekStart = getWeekStart(new Date())
+  const currentWeekStr   = currentWeekStart.toISOString().split('T')[0]
+  const selectedWeekStr  = isTeacher && weekParam ? weekParam : currentWeekStr
+  const selectedWeekStart = new Date(selectedWeekStr + 'T00:00:00Z')
+  const selectedWeekEnd   = new Date(selectedWeekStart)
+  selectedWeekEnd.setUTCDate(selectedWeekEnd.getUTCDate() + 7)
+  const isCurrentWeek = selectedWeekStr === currentWeekStr
 
-  const entries = (board ?? []) as BoardEntry[]
+  // ── URL builder (preserves section + view + week correctly) ──────────────
+  function buildUrl(overrides: { section?: string; view?: 'week' | 'overall'; week?: string }) {
+    const resolvedSection = overrides.section  ?? activeSection
+    const resolvedView    = 'view' in overrides ? overrides.view : (viewMode === 'overall' ? 'overall' : 'week')
+    const resolvedWeek    = overrides.week ?? (resolvedView !== 'overall' && !isCurrentWeek ? selectedWeekStr : undefined)
+    const p = new URLSearchParams()
+    if (resolvedSection !== 'all')                          p.set('section', resolvedSection)
+    if (resolvedView === 'overall')                         p.set('view', 'overall')
+    if (resolvedWeek && resolvedWeek !== currentWeekStr)    p.set('week', resolvedWeek)
+    const q = p.toString()
+    return q ? `/leaderboard?${q}` : '/leaderboard'
+  }
 
-  // Derive rank from position in filtered list (not global DB rank)
+  // ── Data fetching ─────────────────────────────────────────────────────────
+
+  let entries: DisplayEntry[] = []
+  let availableWeeks: string[] = []
+
+  if (viewMode === 'overall') {
+    // ── Overall: use leaderboard view ──
+    const query = supabase
+      .from('leaderboard')
+      .select('student_id, name, avatar, class_section, overall_accuracy, xp, streak_weeks')
+      .order('overall_accuracy', { ascending: false })
+      .order('xp', { ascending: false })
+
+    const { data: board } = activeSection !== 'all'
+      ? await query.eq('class_section', activeSection)
+      : await query
+
+    entries = (board ?? []).map((e: {
+      student_id: string; name: string; avatar: string; class_section: string | null;
+      overall_accuracy: number; xp: number; streak_weeks: number;
+    }) => ({
+      student_id:       e.student_id,
+      name:             e.name,
+      avatar:           e.avatar,
+      class_section:    e.class_section,
+      streak_weeks:     e.streak_weeks ?? 0,
+      xp:               e.xp ?? 0,
+      weekly_xp:        0,
+      overall_accuracy: e.overall_accuracy ?? 0,
+    }))
+
+  } else {
+    // ── Weekly: aggregate from sessions ──
+    const { data: weekSessions } = await supabase
+      .from('sessions')
+      .select('student_id, xp_earned')
+      .eq('is_complete', true)
+      .eq('session_type', 'competition')
+      .gte('completed_at', selectedWeekStart.toISOString())
+      .lt('completed_at', selectedWeekEnd.toISOString())
+
+    const xpMap = new Map<string, number>()
+    for (const s of weekSessions ?? []) {
+      xpMap.set(s.student_id, (xpMap.get(s.student_id) ?? 0) + (s.xp_earned ?? 0))
+    }
+
+    const studentIds = Array.from(xpMap.keys())
+
+    if (studentIds.length > 0) {
+      const profileQuery = (() => {
+        const q = supabase
+          .from('profiles')
+          .select('id, name, avatar, class_section')
+          .in('id', studentIds)
+          .eq('role', 'student')
+        return activeSection !== 'all' ? q.eq('class_section', activeSection) : q
+      })()
+
+      const [profilesRes, statsRes] = await Promise.all([
+        profileQuery,
+        supabase
+          .from('student_stats')
+          .select('user_id, streak_weeks, xp')
+          .in('user_id', studentIds),
+      ])
+
+      const statsMap = new Map(
+        (statsRes.data ?? []).map((s: { user_id: string; streak_weeks: number; xp: number }) => [
+          s.user_id,
+          { streak: s.streak_weeks ?? 0, xp: s.xp ?? 0 },
+        ]),
+      )
+
+      entries = (profilesRes.data ?? [])
+        .map((p: { id: string; name: string; avatar: string; class_section: string | null }) => ({
+          student_id:    p.id,
+          name:          p.name,
+          avatar:        p.avatar,
+          class_section: p.class_section,
+          weekly_xp:     xpMap.get(p.id) ?? 0,
+          streak_weeks:  statsMap.get(p.id)?.streak ?? 0,
+          xp:            statsMap.get(p.id)?.xp ?? 0,
+        }))
+        .sort((a, b) => b.weekly_xp - a.weekly_xp)
+    }
+  }
+
+  // ── Available weeks for teacher week picker ───────────────────────────────
+  if (isTeacher) {
+    const { data: completedDates } = await supabase
+      .from('sessions')
+      .select('completed_at')
+      .eq('is_complete', true)
+      .not('completed_at', 'is', null)
+      .order('completed_at', { ascending: false })
+      .limit(300)
+
+    const weekSet = new Set<string>()
+    weekSet.add(currentWeekStr)
+    for (const row of completedDates ?? []) {
+      const ws = getWeekStart(new Date(row.completed_at)).toISOString().split('T')[0]
+      weekSet.add(ws)
+    }
+    availableWeeks = Array.from(weekSet).sort((a, b) => b.localeCompare(a)).slice(0, 8)
+  }
+
+  // ── Derived display values ────────────────────────────────────────────────
   const myIndex  = entries.findIndex((e) => e.student_id === user.id)
   const myRank   = myIndex >= 0 ? myIndex + 1 : null
   const top3     = entries.slice(0, 3)
   const backHref = isTeacher ? '/teacher' : '/dashboard'
-
-  // Label shown in header
   const sectionLabel = activeSection === 'all' ? 'All Classes' : `Class ${activeSection}`
+
+  const headerSub = viewMode === 'week'
+    ? (isCurrentWeek ? 'This week · ranked by XP earned' : `Week of ${formatWeekRange(selectedWeekStart)}`)
+    : 'All time · ranked by accuracy'
 
   return (
     <main className="min-h-screen bg-[#060c18] text-white pb-12">
@@ -116,25 +255,71 @@ export default async function LeaderboardPage({
           </div>
           <div>
             <h1 className="text-xl font-black">{sectionLabel} Leaderboard</h1>
-            <p className="text-xs text-slate-500">
-              {myRank ? `You're ranked #${myRank}` : 'Ranked by XP and performance'}
-            </p>
+            <p className="text-xs text-slate-500">{headerSub}</p>
           </div>
         </div>
       </div>
 
       <div className="px-4 max-w-lg mx-auto">
 
-        {/* ── Teacher section tabs ── */}
+        {/* ── Teacher: view toggle ── */}
+        {isTeacher && (
+          <div className="flex gap-2 mb-4">
+            <Link
+              href={buildUrl({ view: 'week' })}
+              className={`px-4 py-2 rounded-xl text-sm font-bold transition-all ${
+                viewMode === 'week'
+                  ? 'bg-teal-500 text-slate-900 shadow-sm shadow-teal-500/20'
+                  : 'bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-700/60'
+              }`}
+            >
+              📅 This Week
+            </Link>
+            <Link
+              href={buildUrl({ view: 'overall' })}
+              className={`px-4 py-2 rounded-xl text-sm font-bold transition-all ${
+                viewMode === 'overall'
+                  ? 'bg-teal-500 text-slate-900 shadow-sm shadow-teal-500/20'
+                  : 'bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-700/60'
+              }`}
+            >
+              🏆 All Time
+            </Link>
+          </div>
+        )}
+
+        {/* ── Teacher: week picker ── */}
+        {isTeacher && viewMode === 'week' && availableWeeks.length > 1 && (
+          <div className="flex gap-1.5 overflow-x-auto pb-1 mb-4" style={{ scrollbarWidth: 'none' }}>
+            {availableWeeks.map((ws) => {
+              const isActive = ws === selectedWeekStr
+              const wDate    = new Date(ws + 'T00:00:00Z')
+              return (
+                <Link
+                  key={ws}
+                  href={buildUrl({ week: ws })}
+                  className={`flex-shrink-0 px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all ${
+                    isActive
+                      ? 'bg-amber-500 text-slate-900 shadow-sm shadow-amber-500/20'
+                      : 'bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-700/60'
+                  }`}
+                >
+                  {ws === currentWeekStr ? 'This Week' : formatWeekRange(wDate)}
+                </Link>
+              )
+            })}
+          </div>
+        )}
+
+        {/* ── Teacher: section tabs ── */}
         {isTeacher && (
           <div className="flex gap-1.5 flex-wrap mb-5">
             {(['all', ...SECTIONS] as const).map((s) => {
               const isActive = activeSection === s
-              const href = s === 'all' ? '/leaderboard' : `/leaderboard?section=${s}`
               return (
                 <Link
                   key={s}
-                  href={href}
+                  href={buildUrl({ section: s })}
                   className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
                     isActive
                       ? 'bg-teal-500 text-slate-900 shadow-sm shadow-teal-500/20'
@@ -148,12 +333,24 @@ export default async function LeaderboardPage({
           </div>
         )}
 
-        {/* ── Student section badge ── */}
+        {/* ── Student: section + week badge ── */}
         {!isTeacher && profile?.class_section && (
           <div className="inline-flex items-center gap-2 bg-teal-500/10 border border-teal-500/25 text-teal-300 text-xs font-bold px-3 py-1.5 rounded-full mb-5">
-            <Trophy size={11} className="text-teal-400" />
-            Class {profile.class_section} Rankings
+            <Calendar size={11} className="text-teal-400" />
+            Class {profile.class_section} · This Week
           </div>
+        )}
+
+        {/* ── Rank callout ── */}
+        {myRank ? (
+          <p className="text-xs text-slate-500 mb-3">
+            You&apos;re ranked <span className="text-teal-400 font-black">#{myRank}</span>
+            {viewMode === 'week' ? ' this week' : ' all time'}
+          </p>
+        ) : !isTeacher && viewMode === 'week' && (
+          <p className="text-xs text-slate-500 mb-3">
+            Complete a competition round to appear on the board!
+          </p>
         )}
 
         {/* ── Podium ── */}
@@ -173,9 +370,15 @@ export default async function LeaderboardPage({
                 <p className="text-xs font-bold text-slate-300 text-center truncate w-full px-1">
                   {top3[1].name.split(' ')[0]}
                 </p>
-                <div className="w-full h-16 bg-slate-700 rounded-xl flex flex-col items-center justify-center">
-                  {isTeacher && <span className="text-sm font-black text-white">{Number(top3[1].overall_accuracy).toFixed(1)}%</span>}
-                  <span className={`font-bold ${isTeacher ? 'text-xs text-slate-400' : 'text-sm text-white'}`}>⚡{top3[1].xp}</span>
+                <div className="w-full h-16 bg-slate-700 rounded-xl flex flex-col items-center justify-center gap-0.5">
+                  {viewMode === 'overall' && isTeacher && (
+                    <span className="text-sm font-black text-white">
+                      {Number(top3[1].overall_accuracy).toFixed(1)}%
+                    </span>
+                  )}
+                  <span className={`font-bold ${viewMode === 'overall' && isTeacher ? 'text-xs text-slate-400' : 'text-sm text-white'}`}>
+                    ⚡{viewMode === 'week' ? `+${top3[1].weekly_xp}` : top3[1].xp.toLocaleString()}
+                  </span>
                 </div>
               </div>
 
@@ -188,9 +391,15 @@ export default async function LeaderboardPage({
                 <p className="text-xs font-black text-white text-center truncate w-full px-1">
                   {top3[0].name.split(' ')[0]}
                 </p>
-                <div className="w-full h-24 bg-gradient-to-t from-amber-700 to-amber-500 rounded-xl flex flex-col items-center justify-center shadow-lg shadow-amber-500/20">
-                  {isTeacher && <span className="text-sm font-black text-slate-900">{Number(top3[0].overall_accuracy).toFixed(1)}%</span>}
-                  <span className={`font-bold ${isTeacher ? 'text-xs text-amber-900/80' : 'text-sm text-slate-900'}`}>⚡{top3[0].xp}</span>
+                <div className="w-full h-24 bg-gradient-to-t from-amber-700 to-amber-500 rounded-xl flex flex-col items-center justify-center shadow-lg shadow-amber-500/20 gap-0.5">
+                  {viewMode === 'overall' && isTeacher && (
+                    <span className="text-sm font-black text-slate-900">
+                      {Number(top3[0].overall_accuracy).toFixed(1)}%
+                    </span>
+                  )}
+                  <span className={`font-bold ${viewMode === 'overall' && isTeacher ? 'text-xs text-amber-900/80' : 'text-sm text-slate-900'}`}>
+                    ⚡{viewMode === 'week' ? `+${top3[0].weekly_xp}` : top3[0].xp.toLocaleString()}
+                  </span>
                 </div>
               </div>
 
@@ -203,9 +412,15 @@ export default async function LeaderboardPage({
                 <p className="text-xs font-bold text-slate-300 text-center truncate w-full px-1">
                   {top3[2].name.split(' ')[0]}
                 </p>
-                <div className="w-full h-12 bg-slate-600 rounded-xl flex flex-col items-center justify-center">
-                  {isTeacher && <span className="text-sm font-black text-white">{Number(top3[2].overall_accuracy).toFixed(1)}%</span>}
-                  <span className={`font-bold ${isTeacher ? 'text-xs text-slate-400' : 'text-sm text-white'}`}>⚡{top3[2].xp}</span>
+                <div className="w-full h-12 bg-slate-600 rounded-xl flex flex-col items-center justify-center gap-0.5">
+                  {viewMode === 'overall' && isTeacher && (
+                    <span className="text-sm font-black text-white">
+                      {Number(top3[2].overall_accuracy).toFixed(1)}%
+                    </span>
+                  )}
+                  <span className={`font-bold ${viewMode === 'overall' && isTeacher ? 'text-xs text-slate-400' : 'text-sm text-white'}`}>
+                    ⚡{viewMode === 'week' ? `+${top3[2].weekly_xp}` : top3[2].xp.toLocaleString()}
+                  </span>
                 </div>
               </div>
 
@@ -219,8 +434,13 @@ export default async function LeaderboardPage({
             <span className="w-7 text-xs text-slate-600 font-bold">#</span>
             <span className="flex-1 text-xs text-slate-600 font-bold uppercase tracking-wider">Student</span>
             <div className="flex items-center gap-4 text-xs text-slate-600 font-bold uppercase tracking-wider">
-              {isTeacher && <span className="flex items-center gap-1"><Target size={10} />Acc</span>}
-              <span className="flex items-center gap-1"><Zap size={10} />XP</span>
+              {viewMode === 'overall' && isTeacher && (
+                <span className="flex items-center gap-1"><Target size={10} />Acc</span>
+              )}
+              <span className="flex items-center gap-1">
+                <Zap size={10} />
+                {viewMode === 'week' ? 'Wk XP' : 'XP'}
+              </span>
               <span className="flex items-center gap-1"><Flame size={10} />Str</span>
             </div>
           </div>
@@ -229,14 +449,23 @@ export default async function LeaderboardPage({
         {/* ── Full list ── */}
         {entries.length === 0 ? (
           <div className="text-center py-16">
-            <div className="text-5xl mb-4">🚀</div>
-            <p className="text-slate-400 font-bold">No scores yet</p>
-            <p className="text-slate-600 text-sm mt-1">Be the first on the board!</p>
+            <div className="text-5xl mb-4">{viewMode === 'week' ? '📅' : '🚀'}</div>
+            <p className="text-slate-400 font-bold">
+              {viewMode === 'week' ? 'No scores yet this week' : 'No scores yet'}
+            </p>
+            <p className="text-slate-600 text-sm mt-1">
+              {viewMode === 'week'
+                ? 'Complete a competition round to appear here!'
+                : 'Be the first on the board!'}
+            </p>
           </div>
         ) : (
           <div className="space-y-2">
             {entries.map((entry, i) => {
               const isMe = entry.student_id === user.id
+              const scoreText = viewMode === 'week'
+                ? `+${entry.weekly_xp}`
+                : entry.xp.toLocaleString()
               return (
                 <div
                   key={entry.student_id}
@@ -280,13 +509,13 @@ export default async function LeaderboardPage({
 
                   {/* Stats */}
                   <div className="flex items-center gap-4 flex-shrink-0">
-                    {isTeacher && (
+                    {viewMode === 'overall' && isTeacher && (
                       <span className="text-xs font-black text-white tabular-nums w-10 text-right">
                         {Number(entry.overall_accuracy).toFixed(1)}%
                       </span>
                     )}
-                    <span className="text-xs font-bold text-amber-400 tabular-nums w-10 text-right">
-                      {entry.xp.toLocaleString()}
+                    <span className="text-xs font-bold text-amber-400 tabular-nums w-12 text-right">
+                      {scoreText}
                     </span>
                     <div className="flex items-center gap-0.5 text-orange-400 w-7 justify-end">
                       <Flame size={11} />

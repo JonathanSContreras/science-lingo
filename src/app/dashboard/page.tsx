@@ -50,13 +50,27 @@ export default async function DashboardPage() {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
 
-  // All queries in parallel
-  const [profileRes, statsRes, topicRes, boardRes] = await Promise.all([
-    supabase
-      .from('profiles')
-      .select('name, avatar, role')
-      .eq('id', user.id)
-      .single(),
+  // ── Profile first (need class_section before filtering board) ──
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('name, avatar, role, class_section')
+    .eq('id', user.id)
+    .single()
+
+  if (!profile) redirect('/login')
+  if (profile.role === 'teacher') redirect('/teacher')
+
+  // ── Current week bounds (Monday–Sunday UTC) ──
+  const now = new Date()
+  const day = now.getUTCDay()
+  const weekStart = new Date(now)
+  weekStart.setUTCDate(weekStart.getUTCDate() + (day === 0 ? -6 : 1 - day))
+  weekStart.setUTCHours(0, 0, 0, 0)
+  const weekEnd = new Date(weekStart)
+  weekEnd.setUTCDate(weekEnd.getUTCDate() + 7)
+
+  // ── Parallel: stats, topic, weekly sessions ──
+  const [statsRes, topicRes, weekSessionsRes] = await Promise.all([
     supabase
       .from('student_stats')
       .select('xp, level, streak_weeks, overall_accuracy, total_sessions')
@@ -68,37 +82,64 @@ export default async function DashboardPage() {
       .eq('is_active', true)
       .maybeSingle(),
     supabase
-      .from('leaderboard')
-      .select('student_id, name, avatar, overall_accuracy, xp, streak_weeks, rank')
-      .order('rank')
-      .limit(5),
+      .from('sessions')
+      .select('student_id, xp_earned')
+      .eq('is_complete', true)
+      .eq('session_type', 'competition')
+      .gte('completed_at', weekStart.toISOString())
+      .lt('completed_at', weekEnd.toISOString()),
   ])
 
-  const profile   = profileRes.data
-  const stats     = statsRes.data
-  const topic     = topicRes.data
-  const board     = boardRes.data ?? []
+  const stats = statsRes.data
+  const topic = topicRes.data
 
-  if (!profile) redirect('/login')
-
-  // Teacher goes to their own dashboard
-  if (profile.role === 'teacher') redirect('/teacher')
-
-  // Check if student already completed the competition round for the active topic
-  let competitionDone = false
-  let competitionSessionId: string | null = null
-  if (topic) {
-    const { data: compSession } = await supabase
-      .from('sessions')
-      .select('id')
-      .eq('student_id', user.id)
-      .eq('topic_id', topic.id)
-      .eq('session_type', 'competition')
-      .eq('is_complete', true)
-      .maybeSingle()
-    competitionDone      = !!compSession
-    competitionSessionId = compSession?.id ?? null
+  // ── Aggregate weekly XP ──
+  const xpMap = new Map<string, number>()
+  for (const s of weekSessionsRes.data ?? []) {
+    xpMap.set(s.student_id, (xpMap.get(s.student_id) ?? 0) + (s.xp_earned ?? 0))
   }
+  const weekStudentIds = Array.from(xpMap.keys())
+
+  // ── Parallel: competition check + board profiles ──
+  const [compRes, boardProfilesRes] = await Promise.all([
+    topic
+      ? supabase
+          .from('sessions')
+          .select('id')
+          .eq('student_id', user.id)
+          .eq('topic_id', topic.id)
+          .eq('session_type', 'competition')
+          .eq('is_complete', true)
+          .maybeSingle()
+      : Promise.resolve({ data: null }),
+    weekStudentIds.length > 0
+      ? (() => {
+          const q = supabase
+            .from('profiles')
+            .select('id, name, avatar')
+            .in('id', weekStudentIds)
+            .eq('role', 'student')
+          return profile.class_section
+            ? q.eq('class_section', profile.class_section)
+            : q
+        })()
+      : Promise.resolve({ data: [] }),
+  ])
+
+  const competitionDone      = !!compRes.data
+  const competitionSessionId = compRes.data?.id ?? null
+
+  // ── Build weekly board (top 5) ──
+  type BoardEntry = { student_id: string; name: string; avatar: string; weekly_xp: number }
+  const board: BoardEntry[] = (boardProfilesRes.data ?? [])
+    .map((p: { id: string; name: string; avatar: string }) => ({
+      student_id: p.id,
+      name:       p.name,
+      avatar:     p.avatar,
+      weekly_xp:  xpMap.get(p.id) ?? 0,
+    }))
+    .sort((a: BoardEntry, b: BoardEntry) => b.weekly_xp - a.weekly_xp)
+    .slice(0, 5)
 
   const xp       = stats?.xp ?? 0
   const accuracy = Number(stats?.overall_accuracy ?? 0)
@@ -236,7 +277,7 @@ export default async function DashboardPage() {
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
               <Trophy size={15} className="text-amber-400" />
-              <h3 className="text-xs font-black uppercase tracking-wider">Leaderboard</h3>
+              <h3 className="text-xs font-black uppercase tracking-wider">This Week</h3>
             </div>
             {myRank > 0 && (
               <span className="text-xs text-slate-500 font-medium">You&apos;re #{myRank}</span>
@@ -245,7 +286,7 @@ export default async function DashboardPage() {
 
           {board.length === 0 ? (
             <p className="text-sm text-slate-500 text-center py-4">
-              No scores yet — be the first! 🚀
+              No scores yet this week — be the first! 🚀
             </p>
           ) : (
             <div className="space-y-1.5">
@@ -271,8 +312,8 @@ export default async function DashboardPage() {
                     <span className={`flex-1 text-sm font-semibold truncate ${isMe ? 'text-teal-300' : 'text-slate-200'}`}>
                       {entry.name}{isMe ? ' (you)' : ''}
                     </span>
-                    <span className="text-xs text-teal-500 font-bold tabular-nums">
-                      ⚡{entry.xp}
+                    <span className="text-xs text-amber-400 font-bold tabular-nums">
+                      +{entry.weekly_xp} XP
                     </span>
                   </div>
                 )
