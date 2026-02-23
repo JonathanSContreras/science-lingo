@@ -1,7 +1,6 @@
 import { GoogleGenerativeAI } from '@google/generative-ai'
 import { createClient } from '@/lib/supabase/server'
 
-
 export async function POST(req: Request) {
   try {
     // ── Auth gate ──
