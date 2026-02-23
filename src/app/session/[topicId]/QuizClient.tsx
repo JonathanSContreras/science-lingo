@@ -126,14 +126,14 @@ export function QuizClient({
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
-  if (phase === 'lesson') {
-    return (
-      <MiniLesson
-        topic={topic}
-        onComplete={() => setPhase('quiz')}
-      />
-    )
-  }
+  // if (phase === 'lesson') {
+  //   return (
+  //     <MiniLesson
+  //       topic={topic}
+  //       onComplete={() => setPhase('quiz')}
+  //     />
+  //   )
+  // }
 
   return (
     <main className="min-h-screen bg-[#060c18] flex flex-col max-w-lg mx-auto">
@@ -284,10 +284,10 @@ export function QuizClient({
       </div>
 
       {/* ── AI Chatbot (floating, topic-scoped) ── */}
-      <ChatBot
+      {/* <ChatBot
         topicTitle={topic.title}
         topicDescription={topic.description}
-      />
+      /> */}
 
     </main>
   )

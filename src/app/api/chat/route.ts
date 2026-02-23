@@ -1,4 +1,3 @@
-import { GoogleGenerativeAI } from '@google/generative-ai'
 import { createClient } from '@/lib/supabase/server'
 
 type HistoryMessage = {
@@ -28,36 +27,48 @@ export async function POST(req: Request) {
     }
 
     // ── API key ──
-    const apiKey = process.env.GEMINI_API_KEY
+    const apiKey = process.env.OPENROUTER_API_KEY
     if (!apiKey) {
-      console.error('[chat] GEMINI_API_KEY not set')
+      console.error('[chat] OPENROUTER_API_KEY not set')
       return Response.json({ error: 'AI service not configured' }, { status: 503 })
     }
 
-    // ── Gemini setup ──
-    const genAI  = new GoogleGenerativeAI(apiKey)
-    const model  = genAI.getGenerativeModel({
-      model: 'gemini-1.5-flash',
-      systemInstruction: buildSystemPrompt(topicTitle, topicDescription),
-    })
+    // ── Build messages (system + history + new user message) ──
+    const messages = [
+      { role: 'system', content: buildSystemPrompt(topicTitle, topicDescription) },
+      // Convert history: Gemini uses 'model', OpenAI uses 'assistant'
+      ...(history ?? []).map((msg) => ({
+        role:    msg.role === 'model' ? 'assistant' : 'user',
+        content: msg.content,
+      })),
+      { role: 'user', content: message.trim() },
+    ]
 
-    // ── Convert history to Gemini format ──
-    const geminiHistory = (history ?? []).map((msg) => ({
-      role:  msg.role === 'user' ? 'user' : 'model',
-      parts: [{ text: msg.content }],
-    }))
-
-    // ── Send message ──
-    const chat   = model.startChat({
-      history: geminiHistory,
-      generationConfig: {
-        maxOutputTokens: 300,
-        temperature: 0.75,
+    // ── Call OpenRouter ──
+    const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://scilingoapp.com',
+        'X-Title': 'Science Lingo',
       },
+      body: JSON.stringify({
+        model: 'z-ai/glm-5',
+        messages,
+        max_tokens: 300,
+        temperature: 0.75,
+      }),
     })
 
-    const result = await chat.sendMessage(message.trim())
-    const reply  = result.response.text()
+    if (!res.ok) {
+      const err = await res.text()
+      console.error('[chat] OpenRouter error:', res.status, err)
+      return Response.json({ error: 'Something went wrong.' }, { status: 500 })
+    }
+
+    const data  = await res.json()
+    const reply = (data.choices?.[0]?.message?.content ?? '').trim()
 
     return Response.json({ reply })
   } catch (err) {

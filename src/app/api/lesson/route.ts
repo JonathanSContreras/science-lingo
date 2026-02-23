@@ -1,4 +1,3 @@
-import { GoogleGenerativeAI } from '@google/generative-ai'
 import { createClient } from '@/lib/supabase/server'
 
 export async function POST(req: Request) {
@@ -22,38 +21,53 @@ export async function POST(req: Request) {
     }
 
     // ── API key ──
-    const apiKey = process.env.GEMINI_API_KEY
+    const apiKey = process.env.OPENROUTER_API_KEY
     if (!apiKey) {
-      console.error('[lesson] GEMINI_API_KEY not set')
+      console.error('[lesson] OPENROUTER_API_KEY not set')
       return Response.json({ error: 'AI service not configured' }, { status: 503 })
     }
 
-    // ── Gemini setup ──
-    const genAI = new GoogleGenerativeAI(apiKey)
-    const model = genAI.getGenerativeModel({
-      model: 'gemini-1.5-flash',
-      systemInstruction: buildLessonSystemPrompt(),
-    })
+    // ── Build messages ──
+    const messages = [
+      { role: 'system', content: buildLessonSystemPrompt() },
+      { role: 'user',   content: buildLessonPrompt(topicTitle, topicDescription, standard) },
+    ]
 
-    const prompt = buildLessonPrompt(topicTitle, topicDescription, standard)
-
-    const result = await model.generateContent({
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      generationConfig: {
-        maxOutputTokens: 800,
-        temperature: 0.7,
-        responseMimeType: 'application/json',
+    // ── Call OpenRouter ──
+    const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://scilingoapp.com',
+        'X-Title': 'Science Lingo',
       },
+      body: JSON.stringify({
+        model: 'deepseek/deepseek-r1-0528:free',
+        messages,
+        max_tokens: 800,
+        temperature: 0.7,
+      }),
     })
 
-    const raw = result.response.text().trim()
+    if (!res.ok) {
+      const err = await res.text()
+      console.error('[lesson] OpenRouter error:', res.status, err)
+      return Response.json({ error: 'AI service error' }, { status: 500 })
+    }
+
+    const data = await res.json()
+    const raw = (data.choices?.[0]?.message?.content ?? '').trim()
+
+    // Strip markdown fences if present (e.g. ```json ... ```)
+    const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
 
     // Parse and validate the JSON
     let lesson: LessonContent
     try {
-      lesson = JSON.parse(raw)
+      lesson = JSON.parse(cleaned)
     } catch {
-      console.error('[lesson] Failed to parse Gemini JSON:', raw)
+      console.error('[lesson] Failed to parse JSON:', cleaned)
       return Response.json({ error: 'Failed to generate lesson' }, { status: 500 })
     }
 
