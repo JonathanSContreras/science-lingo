@@ -20,13 +20,13 @@ Science Lingo is a weekly science review platform where students log in, complet
 - [x] Auth middleware (`src/proxy.ts`) — redirects unauthenticated users, role-based routing
 - [x] `/login` — Student ID login (no email, no verification); teachers use email. Admin API creates users with `email_confirm: true` (zero emails ever sent). Class section chosen on signup.
 - [x] `/dashboard` — XP bar, streak, current active topic card, mini leaderboard preview, quick session link
-- [x] `/session/[topicId]` — full quiz flow: one question at a time, hint toggle, instant feedback with explanation, progress bar, refresh-safe (reuses incomplete session)
+- [x] `/session/[topicId]` — full quiz flow: one question at a time, hint toggle, instant feedback with explanation, progress bar, refresh-safe (reuses incomplete session); competition mode has 25s per-question countdown timer (auto-submits wrong on expiry)
 - [x] `/session/summary` — post-session card: accuracy, XP earned + breakdown, streak, class rank, highlight badge message
-- [x] `/leaderboard` — visual podium (top 3) + full ranked list; students see only their class section; teachers see section tabs (All Classes + 8A–8F)
+- [x] `/leaderboard` — visual podium (top 3) + full ranked list; students see only their class section; teachers see section tabs (All Classes + 8A–8F); weekly view ranked by accuracy DESC + completion time ASC as tiebreaker
 - [x] `/profile` — XP progress bar to next level, 4-stat grid, badge showcase (7 possible, earned/locked states), recent sessions list, sign out
 - [x] `/teacher` — section tabs (All Classes + 8A–8F) filter the student roster; summary stats update per filter; class section shown per student in All Classes view
 - [x] `/teacher/topics` — list all topics, set active topic, create new topic
-- [x] `/teacher/topics/[topicId]` — view/add/delete questions for a topic
+- [x] `/teacher/topics/[topicId]` — view/add/delete questions; pool size indicator (need 10+ to go live); competition cap setting; bulk CSV/TSV import (paste from Google Sheets)
 - [x] Accuracy scoring system — `(correctAnswers / totalAttempts) × 100`, per-session + aggregated overall
 - [x] XP & leveling system — base 100 + accuracy bonuses (+50/+100/+150) + streak bonus (+25)
 - [x] Streak tracking — weekly streak, upserted on session complete
@@ -36,6 +36,10 @@ Science Lingo is a weekly science review platform where students log in, complet
 - [x] Landing page (`/`) — hero, features grid, how it works, level ladder, AI tutor callout, final CTA
 - [x] `leaderboard` Supabase view — columns: `student_id, name, avatar, class_section, overall_accuracy, xp, streak_weeks, rank`
 - [x] `profiles` table — `class_section` (8A–8F, null for teachers) and `student_number` (unique, null for teachers) columns
+- [x] Question pool system — topics can hold 30–50+ questions; practice picks 10 random per session; competition uses all (or up to an optional cap); saved `question_ids` on session row keeps same set on refresh
+- [x] Competition timer — 25s countdown per question in competition mode; color shifts teal → amber → red; auto-submits a wrong answer on expiry
+- [x] Bulk question import — teacher pastes from Google Sheets or CSV; auto-detects tab vs comma; per-row parse preview with error highlighting; only valid rows submitted
+- [x] Weekly leaderboard rankings for students; week picker for teachers
 
 ### 🔲 Not Yet Built
 - [ ] `top_of_the_class` and `most_improved` badge triggers (require weekly snapshot logic)
@@ -49,6 +53,10 @@ Science Lingo is a weekly science review platform where students log in, complet
 - **Teacher accounts:** must be created manually in Supabase Auth dashboard + insert a profile row with `role = 'teacher'`. No teacher signup flow exists in the app.
 - **Section filtering:** server-side via `?section=8A` searchParams — no client state needed. Both `/leaderboard` and `/teacher` support this pattern.
 - **next.config.mjs:** `output: 'export'` was removed — it's incompatible with API routes, middleware, and Supabase auth cookies. Deploy to Vercel/Netlify (not GitHub Pages).
+- **Question pool:** `sessions.question_ids uuid[]` stores the shuffled question IDs at session creation time. Resume restores the exact same order. Practice always picks 10 random; competition picks all (or up to `topics.competition_limit` if set).
+- **Leaderboard tiebreaker:** Weekly rankings sort by `accuracy_score DESC` then `completion_seconds ASC` (derived from `completed_at - started_at`). No schema change needed — uses existing session timestamps.
+- **Competition timer:** 25s per question, client-side only (`QuizClient.tsx`). On expiry, auto-records a wrong answer for an unchosen option and advances or ends the session.
+- **Bulk import:** `BulkImportForm.tsx` parses tab-separated (Google Sheets) or comma-separated input. Columns: Question, Option A, B, C, D, Correct (a/b/c/d), Explanation, Hint. Only valid rows sent to `bulkAddQuestions` server action.
 
 --
 
@@ -217,17 +225,17 @@ id, user_id, xp, level, streak, overall_accuracy, last_session_date
 
 **`topics`**
 ```
-id, title, description, week_number, created_by, active (bool), created_at
+id, title, description, week_number, created_by, active (bool), created_at, competition_limit (integer, nullable)
 ```
 
 **`questions`**
 ```
-id, topic_id, question_text, option_a, option_b, option_c, option_d, correct_option, explanation
+id, topic_id, question_text, option_a, option_b, option_c, option_d, correct_option, explanation, hint (text, nullable), order_index (integer)
 ```
 
 **`sessions`**
 ```
-id, student_id, topic_id, started_at, completed_at, accuracy_score, xp_earned, total_attempts, correct_answers
+id, student_id, topic_id, started_at, completed_at, accuracy_score, xp_earned, total_attempts, correct_answers, session_type ('practice'|'competition'), question_ids (uuid[], nullable)
 ```
 
 **`answers`**
@@ -283,13 +291,16 @@ id, student_id, badge_type, earned_at
 9. ✅ Session summary card
 10. ✅ Gemini Flash chatbot integration
 11. ✅ Badges (auto-awarded; manual award is future)
-12. [ ] Teacher dashboard analytics
+12. ✅ Competition timer (25s per question, auto-submit on expiry)
+13. ✅ Question pool + random selection (practice: 10 random; competition: all or capped)
+14. ✅ Bulk question import (Google Sheets / CSV paste)
+15. ✅ Leaderboard tiebreaker (accuracy + completion time)
+16. [ ] Teacher dashboard analytics
 
 ---
 
 ## 🔮 Future Features (v2+)
 
-- **Timed mode** — optional countdown per question for extra pressure and bonus XP
 - **Hint system** — spend earned coins for a hint on a hard question
 - **Boss rounds** — 5-question hard challenge unlocked at the end of each topic, higher XP reward
 - **Review mode** — students revisit all missed questions from past sessions

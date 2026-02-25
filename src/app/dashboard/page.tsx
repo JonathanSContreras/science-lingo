@@ -78,7 +78,7 @@ export default async function DashboardPage() {
       .single(),
     supabase
       .from('topics')
-      .select('id, title, standard, description')
+      .select('id, title, standard, description, competition_open, competition_round')
       .eq('is_active', true)
       .maybeSingle(),
     supabase
@@ -123,6 +123,7 @@ export default async function DashboardPage() {
           .eq('student_id', user.id)
           .eq('topic_id', topic.id)
           .eq('session_type', 'competition')
+          .eq('competition_round', (topic as { competition_round?: number }).competition_round ?? 0)
           .eq('is_complete', true)
           .maybeSingle()
       : Promise.resolve({ data: null }),
@@ -268,7 +269,7 @@ export default async function DashboardPage() {
                 🔬 Practice
               </Link>
 
-              {/* Competition — one shot, earns XP */}
+              {/* Competition — one shot per round, earns XP */}
               {competitionDone ? (
                 <Link
                   href={`/session/summary?session=${competitionSessionId}`}
@@ -276,7 +277,7 @@ export default async function DashboardPage() {
                 >
                   ✓ Competition Done
                 </Link>
-              ) : (
+              ) : (topic as { competition_open?: boolean }).competition_open ? (
                 <Link
                   href={`/session/${topic.id}?mode=competition`}
                   className="inline-flex items-center gap-1.5 bg-amber-500 hover:bg-amber-400 active:scale-95 text-slate-900 font-black text-sm px-4 py-3 rounded-2xl transition-all shadow-lg shadow-amber-500/20"
@@ -285,6 +286,10 @@ export default async function DashboardPage() {
                   Competition
                   <ChevronRight size={14} />
                 </Link>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 bg-slate-800 border border-slate-700 text-slate-500 font-bold text-sm px-4 py-3 rounded-2xl cursor-not-allowed select-none">
+                  🔒 Competition Locked
+                </span>
               )}
             </div>
           </div>

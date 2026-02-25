@@ -34,7 +34,7 @@ type Topic = {
 
 const OPTION_LABELS = ['A', 'B', 'C', 'D'] as const
 const OPTION_KEYS: OptionKey[] = ['option_a', 'option_b', 'option_c', 'option_d']
-const COMPETITION_TIMER_SECS = 10
+const COMPETITION_TIMER_SECS = 15
 
 const POWER_UPS = [
   { id: 'fifty_fifty',   emoji: '🔍', name: '50/50',         cost: 75,  desc: 'Eliminate 2 wrong options on one question' },

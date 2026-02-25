@@ -41,7 +41,7 @@ export default async function SessionPage({
   const [topicRes, questionsRes, statsRes] = await Promise.all([
     supabase
       .from('topics')
-      .select('id, title, standard, description, competition_limit')
+      .select('id, title, standard, description, competition_limit, competition_open, competition_round')
       .eq('id', topicId)
       .single(),
     supabase
@@ -63,14 +63,20 @@ export default async function SessionPage({
   if (!topic)                              redirect('/dashboard')
   if (!questions || questions.length === 0) redirect('/dashboard')
 
-  // ── Competition: redirect if already completed ──
+  const competitionRound = (topic as { competition_round?: number }).competition_round ?? 0
+  const competitionOpen  = (topic as { competition_open?: boolean }).competition_open ?? false
+
+  // ── Competition: gate on open round ──
   if (mode === 'competition') {
+    if (!competitionOpen) redirect('/dashboard')
+
     const { data: completedCompetition } = await supabase
       .from('sessions')
       .select('id')
       .eq('student_id', user.id)
       .eq('topic_id', topicId)
       .eq('session_type', 'competition')
+      .eq('competition_round', competitionRound)
       .eq('is_complete', true)
       .maybeSingle()
 
@@ -80,7 +86,7 @@ export default async function SessionPage({
   }
 
   // ── Session: reuse an in-progress same-type session or create a new one ──
-  const { data: existingSession } = await supabase
+  const existingSessionQuery = supabase
     .from('sessions')
     .select('id, question_ids')
     .eq('student_id', user.id)
@@ -89,7 +95,12 @@ export default async function SessionPage({
     .eq('is_complete', false)
     .order('started_at', { ascending: false })
     .limit(1)
-    .maybeSingle()
+
+  const { data: existingSession } = await (
+    mode === 'competition'
+      ? existingSessionQuery.eq('competition_round', competitionRound)
+      : existingSessionQuery
+  ).maybeSingle()
 
   let sessionId: string
   let orderedQuestions: NonNullable<typeof questions>
@@ -116,14 +127,15 @@ export default async function SessionPage({
     const { data: newSession, error: sessionError } = await supabase
       .from('sessions')
       .insert({
-        student_id:      user.id,
-        topic_id:        topicId,
-        started_at:      new Date().toISOString(),
-        is_complete:     false,
-        correct_answers: 0,
-        total_attempts:  0,
-        session_type:    mode,
-        question_ids:    orderedQuestions.map((q) => q.id),
+        student_id:        user.id,
+        topic_id:          topicId,
+        started_at:        new Date().toISOString(),
+        is_complete:       false,
+        correct_answers:   0,
+        total_attempts:    0,
+        session_type:      mode,
+        question_ids:      orderedQuestions.map((q) => q.id),
+        competition_round: mode === 'competition' ? competitionRound : null,
       })
       .select('id')
       .single()

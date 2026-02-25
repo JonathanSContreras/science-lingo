@@ -6,6 +6,7 @@ import { AddQuestionForm } from './AddQuestionForm'
 import { QuestionCard } from './QuestionCard'
 import { CompetitionLimitForm } from './CompetitionLimitForm'
 import { BulkImportForm } from './BulkImportForm'
+import { CompetitionRoundControl } from './CompetitionRoundControl'
 
 export default async function TopicQuestionsPage({
   params,
@@ -29,7 +30,7 @@ export default async function TopicQuestionsPage({
   const [topicRes, questionsRes] = await Promise.all([
     supabase
       .from('topics')
-      .select('id, title, standard, is_active, competition_limit')
+      .select('id, title, standard, is_active, competition_limit, competition_open, competition_round')
       .eq('id', topicId)
       .single(),
     supabase
@@ -100,6 +101,13 @@ export default async function TopicQuestionsPage({
 
         {/* Bulk import */}
         <BulkImportForm topicId={topicId} startOrderIndex={nextOrderIndex} />
+
+        {/* Competition round control */}
+        <CompetitionRoundControl
+          topicId={topicId}
+          isOpen={topic.competition_open ?? false}
+          round={topic.competition_round ?? 0}
+        />
 
         {/* Competition settings */}
         <div className="bg-slate-900/70 border border-slate-800 rounded-3xl p-5">

@@ -158,6 +158,51 @@ export async function updateCompetitionLimit(topicId: string, limit: number | nu
   }
 }
 
+export async function openCompetition(topicId: string) {
+  try {
+    const supabase = await createClient()
+
+    const { data: topic, error: fetchError } = await supabase
+      .from('topics')
+      .select('competition_round')
+      .eq('id', topicId)
+      .single()
+
+    if (fetchError || !topic) return { error: fetchError?.message ?? 'Topic not found' }
+
+    const { error } = await supabase
+      .from('topics')
+      .update({ competition_open: true, competition_round: topic.competition_round + 1 })
+      .eq('id', topicId)
+
+    if (error) return { error: error.message }
+    revalidatePath(`/teacher/topics/${topicId}`)
+    revalidatePath('/dashboard')
+    return { success: true }
+  } catch (err) {
+    console.error('[openCompetition]', err)
+    return { error: 'Something went wrong.' }
+  }
+}
+
+export async function closeCompetition(topicId: string) {
+  try {
+    const supabase = await createClient()
+    const { error } = await supabase
+      .from('topics')
+      .update({ competition_open: false })
+      .eq('id', topicId)
+
+    if (error) return { error: error.message }
+    revalidatePath(`/teacher/topics/${topicId}`)
+    revalidatePath('/dashboard')
+    return { success: true }
+  } catch (err) {
+    console.error('[closeCompetition]', err)
+    return { error: 'Something went wrong.' }
+  }
+}
+
 export async function deleteQuestion(questionId: string, topicId: string) {
   try {
     const supabase = await createClient()
