@@ -2,6 +2,16 @@ import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { QuizClient } from './QuizClient'
 
+// Fisher-Yates shuffle + slice — picks n random items from arr
+function pickRandom<T>(arr: T[], n: number): T[] {
+  const pool = [...arr]
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[pool[i], pool[j]] = [pool[j], pool[i]]
+  }
+  return pool.slice(0, Math.min(n, pool.length))
+}
+
 export default async function SessionPage({
   params,
   searchParams,
@@ -31,7 +41,7 @@ export default async function SessionPage({
   const [topicRes, questionsRes, statsRes] = await Promise.all([
     supabase
       .from('topics')
-      .select('id, title, standard, description')
+      .select('id, title, standard, description, competition_limit')
       .eq('id', topicId)
       .single(),
     supabase
@@ -69,21 +79,10 @@ export default async function SessionPage({
     }
   }
 
-  // ── Shuffle questions for competition (server-side, one-time) ──
-  const orderedQuestions = (() => {
-    if (mode !== 'competition') return questions
-    const shuffled = [...questions]
-    for (let i = shuffled.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1)) // eslint-disable-line react-hooks/purity
-      ;[shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
-    }
-    return shuffled
-  })()
-
   // ── Session: reuse an in-progress same-type session or create a new one ──
   const { data: existingSession } = await supabase
     .from('sessions')
-    .select('id')
+    .select('id, question_ids')
     .eq('student_id', user.id)
     .eq('topic_id', topicId)
     .eq('session_type', mode)
@@ -93,10 +92,27 @@ export default async function SessionPage({
     .maybeSingle()
 
   let sessionId: string
+  let orderedQuestions: NonNullable<typeof questions>
 
   if (existingSession) {
     sessionId = existingSession.id
+    const savedIds = existingSession.question_ids as string[] | null
+    if (savedIds?.length) {
+      // Restore the exact question order saved when the session was created
+      orderedQuestions = savedIds
+        .map((id) => questions!.find((q) => q.id === id))
+        .filter(Boolean) as typeof questions
+    } else {
+      // Backward compat: sessions created before question pools
+      orderedQuestions = questions!.slice(0, mode === 'practice' ? 10 : questions!.length)
+    }
   } else {
+    // New session — pick questions from the pool
+    const competitionLimit =
+      (topic as { competition_limit?: number | null }).competition_limit ?? null
+    const count = mode === 'practice' ? 10 : (competitionLimit ?? questions!.length)
+    orderedQuestions = pickRandom(questions!, count)
+
     const { data: newSession, error: sessionError } = await supabase
       .from('sessions')
       .insert({
@@ -107,6 +123,7 @@ export default async function SessionPage({
         correct_answers: 0,
         total_attempts:  0,
         session_type:    mode,
+        question_ids:    orderedQuestions.map((q) => q.id),
       })
       .select('id')
       .single()

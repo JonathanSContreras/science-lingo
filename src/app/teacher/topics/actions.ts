@@ -95,6 +95,26 @@ export async function updateQuestion(questionId: string, topicId: string, formDa
   }
 }
 
+export async function updateCompetitionLimit(topicId: string, limit: number | null) {
+  try {
+    const supabase = await createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return { error: 'Not authenticated' }
+
+    const { error } = await supabase
+      .from('topics')
+      .update({ competition_limit: limit })
+      .eq('id', topicId)
+
+    if (error) return { error: error.message }
+    revalidatePath(`/teacher/topics/${topicId}`)
+    return { success: true }
+  } catch (err) {
+    console.error('[updateCompetitionLimit]', err)
+    return { error: 'Something went wrong.' }
+  }
+}
+
 export async function deleteQuestion(questionId: string, topicId: string) {
   try {
     const supabase = await createClient()

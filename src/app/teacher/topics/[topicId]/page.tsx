@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { List } from 'lucide-react'
 import { AddQuestionForm } from './AddQuestionForm'
 import { QuestionCard } from './QuestionCard'
+import { CompetitionLimitForm } from './CompetitionLimitForm'
 
 export default async function TopicQuestionsPage({
   params,
@@ -27,7 +28,7 @@ export default async function TopicQuestionsPage({
   const [topicRes, questionsRes] = await Promise.all([
     supabase
       .from('topics')
-      .select('id, title, standard, is_active')
+      .select('id, title, standard, is_active, competition_limit')
       .eq('id', topicId)
       .single(),
     supabase
@@ -68,21 +69,23 @@ export default async function TopicQuestionsPage({
 
       <div className="px-4 max-w-2xl mx-auto space-y-4 pb-10">
 
-        {/* Progress */}
+        {/* Pool status */}
         <div className="flex items-center gap-3">
           <div className="flex-1 h-2 bg-slate-800 rounded-full overflow-hidden">
             <div
               className={`h-full rounded-full transition-all ${
                 questions.length >= 10 ? 'bg-teal-500' : 'bg-amber-500'
               }`}
-              style={{ width: `${Math.min((questions.length / 10) * 100, 100)}%` }}
+              style={{ width: `${Math.min((questions.length / Math.max(questions.length, 20)) * 100, 100)}%` }}
             />
           </div>
           <span className={`text-xs font-bold tabular-nums ${
             questions.length >= 10 ? 'text-teal-400' : 'text-amber-400'
           }`}>
-            {questions.length}/10 questions
-            {questions.length >= 10 ? ' ✓ ready' : ''}
+            {questions.length} question{questions.length !== 1 ? 's' : ''} in pool
+            {questions.length < 10
+              ? ` · need ${10 - questions.length} more`
+              : ' ✓'}
           </span>
         </div>
 
@@ -92,6 +95,26 @@ export default async function TopicQuestionsPage({
             + Add Question
           </h2>
           <AddQuestionForm topicId={topicId} orderIndex={nextOrderIndex} />
+        </div>
+
+        {/* Competition settings */}
+        <div className="bg-slate-900/70 border border-slate-800 rounded-3xl p-5">
+          <h2 className="text-xs font-black uppercase tracking-wider mb-1 text-amber-400">
+            Competition Cap
+          </h2>
+          <p className="text-xs text-slate-500 mb-4">
+            Practice always picks <span className="text-white font-bold">10 random</span> questions.
+            Competition uses{' '}
+            <span className="text-white font-bold">
+              {topic.competition_limit ? `up to ${topic.competition_limit}` : 'all'}
+            </span>{' '}
+            from the pool.
+          </p>
+          <CompetitionLimitForm
+            topicId={topicId}
+            currentLimit={topic.competition_limit ?? null}
+            poolSize={questions.length}
+          />
         </div>
 
         {/* Question list */}
