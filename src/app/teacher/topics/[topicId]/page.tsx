@@ -7,6 +7,8 @@ import { QuestionCard } from './QuestionCard'
 import { CompetitionLimitForm } from './CompetitionLimitForm'
 import { BulkImportForm } from './BulkImportForm'
 import { CompetitionRoundControl } from './CompetitionRoundControl'
+import { LessonCardForm } from './LessonCardForm'
+import { LessonCardItem } from './LessonCardItem'
 
 export default async function TopicQuestionsPage({
   params,
@@ -29,7 +31,7 @@ export default async function TopicQuestionsPage({
 
   const ALL_SECTIONS = ['8A', '8B', '8C', '8D', '8E', '8F']
 
-  const [topicRes, questionsRes, roundsRes] = await Promise.all([
+  const [topicRes, questionsRes, roundsRes, lessonCardsRes] = await Promise.all([
     supabase
       .from('topics')
       .select('id, title, standard, is_active, competition_limit')
@@ -44,10 +46,16 @@ export default async function TopicQuestionsPage({
       .from('competition_rounds')
       .select('class_section, is_open, round_number')
       .eq('topic_id', topicId),
+    supabase
+      .from('lesson_cards')
+      .select('id, title, body, order_index')
+      .eq('topic_id', topicId)
+      .order('order_index'),
   ])
 
-  const topic     = topicRes.data
-  const questions = questionsRes.data ?? []
+  const topic       = topicRes.data
+  const questions   = questionsRes.data ?? []
+  const lessonCards = lessonCardsRes.data ?? []
 
   if (!topic) redirect('/teacher/topics')
 
@@ -113,6 +121,24 @@ export default async function TopicQuestionsPage({
 
         {/* Bulk import */}
         <BulkImportForm topicId={topicId} startOrderIndex={nextOrderIndex} />
+
+        {/* Mini Lesson */}
+        <div className="bg-slate-900/70 border border-slate-800 rounded-3xl p-5">
+          <h2 className="text-xs font-black uppercase tracking-wider mb-1 text-teal-400">
+            📖 Mini Lesson
+          </h2>
+          <p className="text-xs text-slate-500 mb-4">
+            Add cards that students can read before or during a session. Each card has a title and body.
+          </p>
+          <LessonCardForm topicId={topicId} nextOrderIndex={lessonCards.length} />
+          {lessonCards.length > 0 && (
+            <div className="mt-5 space-y-3">
+              {lessonCards.map((card) => (
+                <LessonCardItem key={card.id} card={card} topicId={topicId} />
+              ))}
+            </div>
+          )}
+        </div>
 
         {/* Competition round control */}
         <CompetitionRoundControl

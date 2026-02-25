@@ -93,6 +93,15 @@ export default async function DashboardPage() {
   const stats = statsRes.data
   const topic = topicRes.data
 
+  // ── Lesson cards count (only if topic exists) ──
+  const lessonCountRes = topic
+    ? await supabase
+        .from('lesson_cards')
+        .select('id', { count: 'exact', head: true })
+        .eq('topic_id', topic.id)
+    : null
+  const hasLesson = (lessonCountRes?.count ?? 0) > 0
+
   // ── Aggregate weekly competition sessions ──
   type DashSession = { xp: number; accuracy: number; seconds: number }
   const sessionMap = new Map<string, DashSession>()
@@ -273,7 +282,7 @@ export default async function DashboardPage() {
             {topic.description && (
               <p className="text-sm text-slate-400 leading-relaxed mb-5">{topic.description}</p>
             )}
-            <div className="flex gap-2">
+            <div className="flex gap-2 flex-wrap">
               {/* Practice — unlimited, no XP */}
               <Link
                 href={`/session/${topic.id}?mode=practice`}
@@ -281,6 +290,16 @@ export default async function DashboardPage() {
               >
                 🔬 Practice
               </Link>
+
+              {/* Lesson — only shown when cards exist */}
+              {hasLesson && (
+                <Link
+                  href={`/lesson/${topic.id}`}
+                  className="inline-flex items-center gap-1.5 bg-slate-700 hover:bg-slate-600 active:scale-95 text-slate-200 font-bold text-sm px-4 py-3 rounded-2xl transition-all border border-slate-600/60"
+                >
+                  📖 Lesson
+                </Link>
+              )}
 
               {/* Competition — one shot per round, earns XP */}
               {competitionDone ? (

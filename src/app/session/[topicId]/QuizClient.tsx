@@ -4,7 +4,7 @@ import { useState, useTransition, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   FlaskConical, Flame, ChevronRight,
-  CheckCircle2, XCircle, Lightbulb, Shield, Zap,
+  CheckCircle2, XCircle, Lightbulb, Shield, Zap, X,
 } from 'lucide-react'
 import { recordAnswer, completeSession, purchasePowerUps } from './actions'
 
@@ -44,18 +44,26 @@ const POWER_UPS = [
 
 // ─── Component ──────────────────────────────────────────────────────────────
 
+type LessonCard = {
+  id: string
+  title: string
+  body: string
+}
+
 export function QuizClient({
   sessionId,
   topic,
   questions,
   mode,
   studentXp,
+  lessonCards = [],
 }: {
   sessionId: string
   topic: Topic
   questions: Question[]
   mode: 'practice' | 'competition'
   studentXp: number
+  lessonCards?: LessonCard[]
 }) {
   const router = useRouter()
   const [confirmed, setConfirmed]           = useState(mode === 'practice')
@@ -77,6 +85,9 @@ export function QuizClient({
   const [fiftyFiftyUsed, setFiftyFiftyUsed]       = useState(false)
   const [eliminatedOptions, setEliminatedOptions] = useState<OptionKey[]>([])
   const [xpAfterPurchase, setXpAfterPurchase]     = useState(studentXp)
+
+  // Lesson drawer
+  const [lessonOpen, setLessonOpen] = useState(false)
 
   const currentQuestion = questions[currentIndex]
   const totalQuestions  = questions.length
@@ -522,6 +533,55 @@ export function QuizClient({
         )}
 
       </div>
+
+      {/* ── Floating lesson button ── */}
+      {lessonCards.length > 0 && (
+        <button
+          onClick={() => setLessonOpen(true)}
+          className="fixed bottom-24 left-4 z-40 flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700/60 text-slate-300 text-xs font-bold px-3 py-2.5 rounded-2xl shadow-lg transition-all active:scale-95"
+          aria-label="Open lesson"
+        >
+          📖 Lesson
+        </button>
+      )}
+
+      {/* ── Lesson drawer ── */}
+      {lessonOpen && (
+        <div className="fixed inset-0 z-50 flex">
+          {/* Backdrop */}
+          <div
+            className="flex-1 bg-black/50"
+            onClick={() => setLessonOpen(false)}
+          />
+          {/* Panel */}
+          <div className="w-full max-w-sm bg-[#0d1526] border-l border-slate-800 flex flex-col shadow-2xl">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-800 flex-shrink-0">
+              <div>
+                <p className="text-xs font-bold text-teal-400 uppercase tracking-widest">Lesson</p>
+                <p className="text-sm font-black text-white">{topic.title}</p>
+              </div>
+              <button
+                onClick={() => setLessonOpen(false)}
+                className="p-1.5 rounded-lg text-slate-500 hover:text-white hover:bg-slate-700 transition-all"
+                aria-label="Close lesson"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+              {lessonCards.map((card) => (
+                <div
+                  key={card.id}
+                  className="bg-slate-800/60 border border-slate-700/40 rounded-2xl p-4"
+                >
+                  <p className="text-sm font-black text-teal-300 mb-2">{card.title}</p>
+                  <p className="text-sm text-slate-400 leading-relaxed whitespace-pre-wrap">{card.body}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Sticky bottom CTA ── */}
       <div className="px-4 pt-3 pb-8 flex-shrink-0 border-t border-slate-800/60 bg-[#060c18]">

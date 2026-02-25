@@ -269,3 +269,34 @@ export async function deleteQuestion(questionId: string, topicId: string) {
     return { error: 'Something went wrong.' }
   }
 }
+
+export async function addLessonCard(topicId: string, title: string, body: string, orderIndex: number) {
+  try {
+    const supabase = await createClient()
+    const { error } = await supabase.from('lesson_cards').insert({
+      topic_id:    topicId,
+      title,
+      body,
+      order_index: orderIndex,
+    })
+    if (error) return { error: error.message }
+    revalidatePath(`/teacher/topics/${topicId}`)
+    return { success: true }
+  } catch (err) {
+    console.error('[addLessonCard]', err)
+    return { error: 'Something went wrong.' }
+  }
+}
+
+export async function deleteLessonCard(cardId: string, topicId: string) {
+  try {
+    const supabase = await createClient()
+    const { error } = await supabase.from('lesson_cards').delete().eq('id', cardId)
+    if (error) return { error: error.message }
+    revalidatePath(`/teacher/topics/${topicId}`)
+    return { success: true }
+  } catch (err) {
+    console.error('[deleteLessonCard]', err)
+    return { error: 'Something went wrong.' }
+  }
+}

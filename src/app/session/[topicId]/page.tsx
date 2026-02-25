@@ -37,8 +37,8 @@ export default async function SessionPage({
 
   if (profile?.role === 'teacher') redirect('/teacher')
 
-  // ── Topic + questions + student XP ──
-  const [topicRes, questionsRes, statsRes] = await Promise.all([
+  // ── Topic + questions + student XP + lesson cards ──
+  const [topicRes, questionsRes, statsRes, lessonCardsRes] = await Promise.all([
     supabase
       .from('topics')
       .select('id, title, standard, description, competition_limit')
@@ -54,11 +54,17 @@ export default async function SessionPage({
       .select('xp')
       .eq('user_id', user.id)
       .maybeSingle(),
+    supabase
+      .from('lesson_cards')
+      .select('id, title, body, order_index')
+      .eq('topic_id', topicId)
+      .order('order_index'),
   ])
 
-  const topic      = topicRes.data
-  const questions  = questionsRes.data
-  const studentXp  = statsRes.data?.xp ?? 0
+  const topic       = topicRes.data
+  const questions   = questionsRes.data
+  const studentXp   = statsRes.data?.xp ?? 0
+  const lessonCards = lessonCardsRes.data ?? []
 
   if (!topic)                              redirect('/dashboard')
   if (!questions || questions.length === 0) redirect('/dashboard')
@@ -167,6 +173,7 @@ export default async function SessionPage({
       questions={orderedQuestions}
       mode={mode}
       studentXp={studentXp}
+      lessonCards={lessonCards}
     />
   )
 }
