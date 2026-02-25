@@ -95,6 +95,49 @@ export async function updateQuestion(questionId: string, topicId: string, formDa
   }
 }
 
+export async function bulkAddQuestions(
+  topicId: string,
+  questions: Array<{
+    question_text:  string
+    option_a:       string
+    option_b:       string
+    option_c:       string
+    option_d:       string
+    correct_option: string
+    explanation:    string
+    hint:           string
+  }>,
+  startOrderIndex: number,
+) {
+  try {
+    const supabase = await createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return { error: 'Not authenticated' }
+
+    const rows = questions.map((q, i) => ({
+      topic_id:       topicId,
+      question_text:  q.question_text,
+      option_a:       q.option_a,
+      option_b:       q.option_b,
+      option_c:       q.option_c,
+      option_d:       q.option_d,
+      correct_option: q.correct_option,
+      explanation:    q.explanation,
+      hint:           q.hint || null,
+      order_index:    startOrderIndex + i,
+    }))
+
+    const { error } = await supabase.from('questions').insert(rows)
+    if (error) return { error: error.message }
+
+    revalidatePath(`/teacher/topics/${topicId}`)
+    return { success: true }
+  } catch (err) {
+    console.error('[bulkAddQuestions]', err)
+    return { error: 'Something went wrong.' }
+  }
+}
+
 export async function updateCompetitionLimit(topicId: string, limit: number | null) {
   try {
     const supabase = await createClient()

@@ -5,6 +5,7 @@ import { List } from 'lucide-react'
 import { AddQuestionForm } from './AddQuestionForm'
 import { QuestionCard } from './QuestionCard'
 import { CompetitionLimitForm } from './CompetitionLimitForm'
+import { BulkImportForm } from './BulkImportForm'
 
 export default async function TopicQuestionsPage({
   params,
@@ -96,6 +97,9 @@ export default async function TopicQuestionsPage({
           </h2>
           <AddQuestionForm topicId={topicId} orderIndex={nextOrderIndex} />
         </div>
+
+        {/* Bulk import */}
+        <BulkImportForm topicId={topicId} startOrderIndex={nextOrderIndex} />
 
         {/* Competition settings */}
         <div className="bg-slate-900/70 border border-slate-800 rounded-3xl p-5">
