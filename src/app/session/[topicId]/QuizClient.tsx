@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useTransition } from 'react'
+import { useState, useTransition, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   FlaskConical, Flame, ChevronRight,
@@ -34,6 +34,7 @@ type Topic = {
 
 const OPTION_LABELS = ['A', 'B', 'C', 'D'] as const
 const OPTION_KEYS: OptionKey[] = ['option_a', 'option_b', 'option_c', 'option_d']
+const COMPETITION_TIMER_SECS = 25
 
 const POWER_UPS = [
   { id: 'fifty_fifty',   emoji: '🔍', name: '50/50',         cost: 75,  desc: 'Eliminate 2 wrong options on one question' },
@@ -64,6 +65,9 @@ export function QuizClient({
   const [correctAnswers, setCorrectAnswers] = useState(0)
   const [showHint, setShowHint]             = useState(false)
   const [isPending, startTransition]        = useTransition()
+
+  // Competition timer
+  const [timeLeft, setTimeLeft] = useState(COMPETITION_TIMER_SECS)
 
   // Power-up shop state (pre-purchase selections)
   const [selectedPowerUps, setSelectedPowerUps] = useState<string[]>([])
@@ -171,6 +175,41 @@ export function QuizClient({
     })
   }
 
+  // ── Competition timer ──────────────────────────────────────────────────────
+
+  // Reset timer when advancing to the next question
+  useEffect(() => {
+    if (mode === 'competition' && confirmed) setTimeLeft(COMPETITION_TIMER_SECS)
+  }, [currentIndex, mode, confirmed])
+
+  // Count down one second at a time (stops when answered or time runs out)
+  useEffect(() => {
+    if (mode !== 'competition' || !confirmed || hasAnswered || timeLeft <= 0) return
+    const id = setTimeout(() => setTimeLeft((t) => t - 1), 1000)
+    return () => clearTimeout(id)
+  }, [mode, confirmed, hasAnswered, timeLeft])
+
+  // Auto-submit a wrong answer when the clock hits 0
+  useEffect(() => {
+    if (mode !== 'competition' || !confirmed || timeLeft !== 0 || hasAnswered || isPending) return
+    const wrongKey = (OPTION_KEYS.find((k) => k !== correctKey) ?? 'option_a') as OptionKey
+    setHasAnswered(true)
+    startTransition(async () => {
+      await recordAnswer(sessionId, currentQuestion.id, wrongKey, false)
+      if (isLastQuestion) {
+        const result = await completeSession(sessionId, correctAnswers, totalQuestions)
+        if (result.success) router.push(`/session/summary?session=${sessionId}`)
+      } else {
+        setCurrentIndex((i) => i + 1)
+        setSelectedOption(null)
+        setHasAnswered(false)
+        setShowHint(false)
+        setEliminatedOptions([])
+      }
+    })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timeLeft, mode, confirmed, hasAnswered, isPending])
+
   // ── Option styling ─────────────────────────────────────────────────────────
 
   function getOptionClass(key: OptionKey) {
@@ -222,6 +261,13 @@ export function QuizClient({
               <p className="text-xs text-slate-300 leading-relaxed">
                 <span className="font-black text-amber-400">You can only take this once.</span>{' '}
                 Your score will be locked and ranked on the leaderboard.
+              </p>
+            </div>
+            <div className="flex items-start gap-3">
+              <span className="text-base mt-0.5">⏱️</span>
+              <p className="text-xs text-slate-300 leading-relaxed">
+                <span className="font-black text-amber-400">{COMPETITION_TIMER_SECS} seconds per question.</span>{' '}
+                Unanswered questions are marked wrong.
               </p>
             </div>
             <div className="flex items-start gap-3">
@@ -350,6 +396,28 @@ export function QuizClient({
           />
         </div>
       </div>
+
+      {/* ── Competition timer bar ── */}
+      {mode === 'competition' && (
+        <div className="px-4 pb-3 flex-shrink-0">
+          <div className="flex items-center justify-between mb-1.5">
+            <span className="text-xs font-bold text-slate-600 uppercase tracking-wider">Time</span>
+            <span className={`text-sm font-black tabular-nums transition-colors duration-300 ${
+              hasAnswered ? 'text-slate-700' : timeLeft <= 5 ? 'text-red-400' : timeLeft <= 10 ? 'text-amber-400' : 'text-slate-500'
+            }`}>
+              {hasAnswered ? '✓' : `${timeLeft}s`}
+            </span>
+          </div>
+          <div className="h-1.5 bg-slate-800/80 rounded-full overflow-hidden">
+            <div
+              className={`h-full rounded-full transition-[width] duration-1000 ease-linear ${
+                hasAnswered ? 'bg-slate-700' : timeLeft <= 5 ? 'bg-red-500' : timeLeft <= 10 ? 'bg-amber-500' : 'bg-teal-500'
+              }`}
+              style={{ width: hasAnswered ? '100%' : `${(timeLeft / COMPETITION_TIMER_SECS) * 100}%` }}
+            />
+          </div>
+        </div>
+      )}
 
       {/* ── Scrollable content ── */}
       <div className="flex-1 overflow-y-auto px-4 pb-4 space-y-4">

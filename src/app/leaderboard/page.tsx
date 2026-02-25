@@ -3,7 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import Link from 'next/link'
 import {
   FlaskConical, Atom, Microscope, Rocket, Star,
-  Trophy, Flame, ArrowLeft, Target, Zap, Calendar,
+  Trophy, Flame, ArrowLeft, Target, Zap, Calendar, Clock,
 } from 'lucide-react'
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -46,6 +46,13 @@ function getWeekStart(date: Date): Date {
   return d
 }
 
+function formatDuration(secs: number | undefined): string {
+  if (!secs || secs >= 99999) return '—'
+  const m = Math.floor(secs / 60)
+  const s = secs % 60
+  return m > 0 ? `${m}m ${s.toString().padStart(2, '0')}s` : `${s}s`
+}
+
 function formatWeekRange(weekStart: Date): string {
   const end = new Date(weekStart)
   end.setUTCDate(end.getUTCDate() + 6)
@@ -57,14 +64,16 @@ function formatWeekRange(weekStart: Date): string {
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 type DisplayEntry = {
-  student_id:        string
-  name:              string
-  avatar:            string
-  class_section:     string | null
-  streak_weeks:      number
-  xp:                number   // all-time XP (for level title + overall score)
-  weekly_xp:         number   // weekly XP (0 in overall view)
-  overall_accuracy?: number   // only in overall view
+  student_id:            string
+  name:                  string
+  avatar:                string
+  class_section:         string | null
+  streak_weeks:          number
+  xp:                    number   // all-time XP
+  weekly_xp:             number   // weekly XP (kept for reference)
+  overall_accuracy?:     number   // overall view only
+  competition_accuracy?: number   // weekly competition accuracy
+  completion_seconds?:   number   // time taken (tiebreaker)
 }
 
 // ─── Page ────────────────────────────────────────────────────────────────────
@@ -148,24 +157,42 @@ export default async function LeaderboardPage({
       xp:               e.xp ?? 0,
       weekly_xp:        0,
       overall_accuracy: e.overall_accuracy ?? 0,
-    }))
+    })).sort((a, b) =>
+      (b.overall_accuracy ?? 0) - (a.overall_accuracy ?? 0) ||
+      (b.xp ?? 0) - (a.xp ?? 0)
+    )
 
   } else {
     // ── Weekly: aggregate from sessions ──
     const { data: weekSessions } = await supabase
       .from('sessions')
-      .select('student_id, xp_earned')
+      .select('student_id, xp_earned, accuracy_score, started_at, completed_at')
       .eq('is_complete', true)
       .eq('session_type', 'competition')
       .gte('completed_at', selectedWeekStart.toISOString())
       .lt('completed_at', selectedWeekEnd.toISOString())
 
-    const xpMap = new Map<string, number>()
+    type WeekSessionData = { xp: number; accuracy: number; seconds: number }
+    const sessionMap = new Map<string, WeekSessionData>()
     for (const s of weekSessions ?? []) {
-      xpMap.set(s.student_id, (xpMap.get(s.student_id) ?? 0) + (s.xp_earned ?? 0))
+      const seconds =
+        s.started_at && s.completed_at
+          ? Math.round(
+              (new Date(s.completed_at).getTime() - new Date(s.started_at).getTime()) / 1000,
+            )
+          : 99999
+      // Competition is one-shot, but keep best accuracy in case of data anomalies
+      const existing = sessionMap.get(s.student_id)
+      if (!existing || (s.accuracy_score ?? 0) > existing.accuracy) {
+        sessionMap.set(s.student_id, {
+          xp:       s.xp_earned ?? 0,
+          accuracy: s.accuracy_score ?? 0,
+          seconds,
+        })
+      }
     }
 
-    const studentIds = Array.from(xpMap.keys())
+    const studentIds = Array.from(sessionMap.keys())
 
     if (studentIds.length > 0) {
       const profileQuery = (() => {
@@ -194,15 +221,20 @@ export default async function LeaderboardPage({
 
       entries = (profilesRes.data ?? [])
         .map((p: { id: string; name: string; avatar: string; class_section: string | null }) => ({
-          student_id:    p.id,
-          name:          p.name,
-          avatar:        p.avatar,
-          class_section: p.class_section,
-          weekly_xp:     xpMap.get(p.id) ?? 0,
-          streak_weeks:  statsMap.get(p.id)?.streak ?? 0,
-          xp:            statsMap.get(p.id)?.xp ?? 0,
+          student_id:           p.id,
+          name:                 p.name,
+          avatar:               p.avatar,
+          class_section:        p.class_section,
+          weekly_xp:            sessionMap.get(p.id)?.xp ?? 0,
+          streak_weeks:         statsMap.get(p.id)?.streak ?? 0,
+          xp:                   statsMap.get(p.id)?.xp ?? 0,
+          competition_accuracy: sessionMap.get(p.id)?.accuracy ?? 0,
+          completion_seconds:   sessionMap.get(p.id)?.seconds ?? 99999,
         }))
-        .sort((a, b) => b.weekly_xp - a.weekly_xp)
+        .sort((a, b) =>
+          (b.competition_accuracy ?? 0) - (a.competition_accuracy ?? 0) ||
+          (a.completion_seconds ?? 99999) - (b.completion_seconds ?? 99999)
+        )
     }
   }
 
@@ -233,7 +265,7 @@ export default async function LeaderboardPage({
   const sectionLabel = activeSection === 'all' ? 'All Classes' : `Class ${activeSection}`
 
   const headerSub = viewMode === 'week'
-    ? (isCurrentWeek ? 'This week · ranked by XP earned' : `Week of ${formatWeekRange(selectedWeekStart)}`)
+    ? (isCurrentWeek ? 'This week · ranked by accuracy + speed' : `Week of ${formatWeekRange(selectedWeekStart)}`)
     : 'All time · ranked by accuracy'
 
   return (
@@ -377,7 +409,9 @@ export default async function LeaderboardPage({
                     </span>
                   )}
                   <span className={`font-bold ${viewMode === 'overall' && isTeacher ? 'text-xs text-slate-400' : 'text-sm text-white'}`}>
-                    ⚡{viewMode === 'week' ? `+${top3[1].weekly_xp}` : top3[1].xp.toLocaleString()}
+                    {viewMode === 'week'
+                      ? `${top3[1].competition_accuracy ?? 0}%`
+                      : `⚡${top3[1].xp.toLocaleString()}`}
                   </span>
                 </div>
               </div>
@@ -398,7 +432,9 @@ export default async function LeaderboardPage({
                     </span>
                   )}
                   <span className={`font-bold ${viewMode === 'overall' && isTeacher ? 'text-xs text-amber-900/80' : 'text-sm text-slate-900'}`}>
-                    ⚡{viewMode === 'week' ? `+${top3[0].weekly_xp}` : top3[0].xp.toLocaleString()}
+                    {viewMode === 'week'
+                      ? `${top3[0].competition_accuracy ?? 0}%`
+                      : `⚡${top3[0].xp.toLocaleString()}`}
                   </span>
                 </div>
               </div>
@@ -419,7 +455,9 @@ export default async function LeaderboardPage({
                     </span>
                   )}
                   <span className={`font-bold ${viewMode === 'overall' && isTeacher ? 'text-xs text-slate-400' : 'text-sm text-white'}`}>
-                    ⚡{viewMode === 'week' ? `+${top3[2].weekly_xp}` : top3[2].xp.toLocaleString()}
+                    {viewMode === 'week'
+                      ? `${top3[2].competition_accuracy ?? 0}%`
+                      : `⚡${top3[2].xp.toLocaleString()}`}
                   </span>
                 </div>
               </div>
@@ -437,10 +475,14 @@ export default async function LeaderboardPage({
               {viewMode === 'overall' && isTeacher && (
                 <span className="flex items-center gap-1"><Target size={10} />Acc</span>
               )}
-              <span className="flex items-center gap-1">
-                <Zap size={10} />
-                {viewMode === 'week' ? 'Wk XP' : 'XP'}
-              </span>
+              {viewMode === 'week' ? (
+                <>
+                  <span className="flex items-center gap-1"><Target size={10} />Acc</span>
+                  <span className="flex items-center gap-1"><Clock size={10} />Time</span>
+                </>
+              ) : (
+                <span className="flex items-center gap-1"><Zap size={10} />XP</span>
+              )}
               <span className="flex items-center gap-1"><Flame size={10} />Str</span>
             </div>
           </div>
@@ -463,9 +505,6 @@ export default async function LeaderboardPage({
           <div className="space-y-2">
             {entries.map((entry, i) => {
               const isMe = entry.student_id === user.id
-              const scoreText = viewMode === 'week'
-                ? `+${entry.weekly_xp}`
-                : entry.xp.toLocaleString()
               return (
                 <div
                   key={entry.student_id}
@@ -514,9 +553,20 @@ export default async function LeaderboardPage({
                         {Number(entry.overall_accuracy).toFixed(1)}%
                       </span>
                     )}
-                    <span className="text-xs font-bold text-amber-400 tabular-nums w-12 text-right">
-                      {scoreText}
-                    </span>
+                    {viewMode === 'week' ? (
+                      <>
+                        <span className="text-xs font-black text-teal-400 tabular-nums w-12 text-right">
+                          {(entry.competition_accuracy ?? 0).toFixed(1)}%
+                        </span>
+                        <span className="text-xs font-bold text-slate-500 tabular-nums w-14 text-right">
+                          {formatDuration(entry.completion_seconds)}
+                        </span>
+                      </>
+                    ) : (
+                      <span className="text-xs font-bold text-amber-400 tabular-nums w-12 text-right">
+                        {entry.xp.toLocaleString()}
+                      </span>
+                    )}
                     <div className="flex items-center gap-0.5 text-orange-400 w-7 justify-end">
                       <Flame size={11} />
                       <span className="text-xs font-bold tabular-nums">{entry.streak_weeks ?? 0}</span>

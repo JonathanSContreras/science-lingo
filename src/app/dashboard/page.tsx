@@ -83,7 +83,7 @@ export default async function DashboardPage() {
       .maybeSingle(),
     supabase
       .from('sessions')
-      .select('student_id, xp_earned')
+      .select('student_id, xp_earned, accuracy_score, started_at, completed_at')
       .eq('is_complete', true)
       .eq('session_type', 'competition')
       .gte('completed_at', weekStart.toISOString())
@@ -93,12 +93,26 @@ export default async function DashboardPage() {
   const stats = statsRes.data
   const topic = topicRes.data
 
-  // ── Aggregate weekly XP ──
-  const xpMap = new Map<string, number>()
+  // ── Aggregate weekly competition sessions ──
+  type DashSession = { xp: number; accuracy: number; seconds: number }
+  const sessionMap = new Map<string, DashSession>()
   for (const s of weekSessionsRes.data ?? []) {
-    xpMap.set(s.student_id, (xpMap.get(s.student_id) ?? 0) + (s.xp_earned ?? 0))
+    const seconds =
+      s.started_at && s.completed_at
+        ? Math.round(
+            (new Date(s.completed_at).getTime() - new Date(s.started_at).getTime()) / 1000,
+          )
+        : 99999
+    const existing = sessionMap.get(s.student_id)
+    if (!existing || (s.accuracy_score ?? 0) > existing.accuracy) {
+      sessionMap.set(s.student_id, {
+        xp:       s.xp_earned ?? 0,
+        accuracy: s.accuracy_score ?? 0,
+        seconds,
+      })
+    }
   }
-  const weekStudentIds = Array.from(xpMap.keys())
+  const weekStudentIds = Array.from(sessionMap.keys())
 
   // ── Parallel: competition check + board profiles ──
   const [compRes, boardProfilesRes] = await Promise.all([
@@ -129,16 +143,28 @@ export default async function DashboardPage() {
   const competitionDone      = !!compRes.data
   const competitionSessionId = compRes.data?.id ?? null
 
-  // ── Build weekly board (top 5) ──
-  type BoardEntry = { student_id: string; name: string; avatar: string; weekly_xp: number }
+  // ── Build weekly board (top 5, ranked by accuracy then speed) ──
+  type BoardEntry = {
+    student_id:           string
+    name:                 string
+    avatar:               string
+    weekly_xp:            number
+    competition_accuracy: number
+    completion_seconds:   number
+  }
   const board: BoardEntry[] = (boardProfilesRes.data ?? [])
     .map((p: { id: string; name: string; avatar: string }) => ({
-      student_id: p.id,
-      name:       p.name,
-      avatar:     p.avatar,
-      weekly_xp:  xpMap.get(p.id) ?? 0,
+      student_id:           p.id,
+      name:                 p.name,
+      avatar:               p.avatar,
+      weekly_xp:            sessionMap.get(p.id)?.xp ?? 0,
+      competition_accuracy: sessionMap.get(p.id)?.accuracy ?? 0,
+      completion_seconds:   sessionMap.get(p.id)?.seconds ?? 99999,
     }))
-    .sort((a: BoardEntry, b: BoardEntry) => b.weekly_xp - a.weekly_xp)
+    .sort((a: BoardEntry, b: BoardEntry) =>
+      b.competition_accuracy - a.competition_accuracy ||
+      a.completion_seconds - b.completion_seconds
+    )
     .slice(0, 5)
 
   const xp       = stats?.xp ?? 0
@@ -312,8 +338,8 @@ export default async function DashboardPage() {
                     <span className={`flex-1 text-sm font-semibold truncate ${isMe ? 'text-teal-300' : 'text-slate-200'}`}>
                       {entry.name}{isMe ? ' (you)' : ''}
                     </span>
-                    <span className="text-xs text-amber-400 font-bold tabular-nums">
-                      +{entry.weekly_xp} XP
+                    <span className="text-xs text-teal-400 font-bold tabular-nums">
+                      {entry.competition_accuracy.toFixed(1)}%
                     </span>
                   </div>
                 )
