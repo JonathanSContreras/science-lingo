@@ -158,22 +158,25 @@ export async function updateCompetitionLimit(topicId: string, limit: number | nu
   }
 }
 
-export async function openCompetition(topicId: string) {
+const ALL_SECTIONS = ['8A', '8B', '8C', '8D', '8E', '8F'] as const
+
+export async function openCompetition(topicId: string, classSection: string) {
   try {
     const supabase = await createClient()
 
-    const { data: topic, error: fetchError } = await supabase
-      .from('topics')
-      .select('competition_round')
-      .eq('id', topicId)
-      .single()
-
-    if (fetchError || !topic) return { error: fetchError?.message ?? 'Topic not found' }
+    const { data: existing } = await supabase
+      .from('competition_rounds')
+      .select('round_number')
+      .eq('topic_id', topicId)
+      .eq('class_section', classSection)
+      .maybeSingle()
 
     const { error } = await supabase
-      .from('topics')
-      .update({ competition_open: true, competition_round: topic.competition_round + 1 })
-      .eq('id', topicId)
+      .from('competition_rounds')
+      .upsert(
+        { topic_id: topicId, class_section: classSection, is_open: true, round_number: (existing?.round_number ?? 0) + 1 },
+        { onConflict: 'topic_id,class_section' },
+      )
 
     if (error) return { error: error.message }
     revalidatePath(`/teacher/topics/${topicId}`)
@@ -185,13 +188,14 @@ export async function openCompetition(topicId: string) {
   }
 }
 
-export async function closeCompetition(topicId: string) {
+export async function closeCompetition(topicId: string, classSection: string) {
   try {
     const supabase = await createClient()
     const { error } = await supabase
-      .from('topics')
-      .update({ competition_open: false })
-      .eq('id', topicId)
+      .from('competition_rounds')
+      .update({ is_open: false })
+      .eq('topic_id', topicId)
+      .eq('class_section', classSection)
 
     if (error) return { error: error.message }
     revalidatePath(`/teacher/topics/${topicId}`)
@@ -199,6 +203,56 @@ export async function closeCompetition(topicId: string) {
     return { success: true }
   } catch (err) {
     console.error('[closeCompetition]', err)
+    return { error: 'Something went wrong.' }
+  }
+}
+
+export async function openAllCompetitions(topicId: string) {
+  try {
+    const supabase = await createClient()
+
+    const { data: existing } = await supabase
+      .from('competition_rounds')
+      .select('class_section, round_number')
+      .eq('topic_id', topicId)
+
+    const existingMap = new Map(existing?.map((r) => [r.class_section, r.round_number]) ?? [])
+
+    const rows = ALL_SECTIONS.map((section) => ({
+      topic_id:      topicId,
+      class_section: section,
+      is_open:       true,
+      round_number:  (existingMap.get(section) ?? 0) + 1,
+    }))
+
+    const { error } = await supabase
+      .from('competition_rounds')
+      .upsert(rows, { onConflict: 'topic_id,class_section' })
+
+    if (error) return { error: error.message }
+    revalidatePath(`/teacher/topics/${topicId}`)
+    revalidatePath('/dashboard')
+    return { success: true }
+  } catch (err) {
+    console.error('[openAllCompetitions]', err)
+    return { error: 'Something went wrong.' }
+  }
+}
+
+export async function closeAllCompetitions(topicId: string) {
+  try {
+    const supabase = await createClient()
+    const { error } = await supabase
+      .from('competition_rounds')
+      .update({ is_open: false })
+      .eq('topic_id', topicId)
+
+    if (error) return { error: error.message }
+    revalidatePath(`/teacher/topics/${topicId}`)
+    revalidatePath('/dashboard')
+    return { success: true }
+  } catch (err) {
+    console.error('[closeAllCompetitions]', err)
     return { error: 'Something went wrong.' }
   }
 }

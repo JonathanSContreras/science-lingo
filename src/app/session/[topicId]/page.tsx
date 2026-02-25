@@ -31,7 +31,7 @@ export default async function SessionPage({
 
   const { data: profile } = await supabase
     .from('profiles')
-    .select('role')
+    .select('role, class_section')
     .eq('id', user.id)
     .single()
 
@@ -41,7 +41,7 @@ export default async function SessionPage({
   const [topicRes, questionsRes, statsRes] = await Promise.all([
     supabase
       .from('topics')
-      .select('id, title, standard, description, competition_limit, competition_open, competition_round')
+      .select('id, title, standard, description, competition_limit')
       .eq('id', topicId)
       .single(),
     supabase
@@ -63,8 +63,20 @@ export default async function SessionPage({
   if (!topic)                              redirect('/dashboard')
   if (!questions || questions.length === 0) redirect('/dashboard')
 
-  const competitionRound = (topic as { competition_round?: number }).competition_round ?? 0
-  const competitionOpen  = (topic as { competition_open?: boolean }).competition_open ?? false
+  // ── Competition: fetch per-class round state ──
+  const classSection = (profile as { class_section?: string | null })?.class_section ?? null
+
+  const { data: roundRow } = classSection
+    ? await supabase
+        .from('competition_rounds')
+        .select('is_open, round_number')
+        .eq('topic_id', topicId)
+        .eq('class_section', classSection)
+        .maybeSingle()
+    : { data: null }
+
+  const competitionOpen  = roundRow?.is_open       ?? false
+  const competitionRound = roundRow?.round_number   ?? 0
 
   // ── Competition: gate on open round ──
   if (mode === 'competition') {

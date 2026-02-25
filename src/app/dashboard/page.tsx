@@ -78,7 +78,7 @@ export default async function DashboardPage() {
       .single(),
     supabase
       .from('topics')
-      .select('id, title, standard, description, competition_open, competition_round')
+      .select('id, title, standard, description')
       .eq('is_active', true)
       .maybeSingle(),
     supabase
@@ -114,17 +114,14 @@ export default async function DashboardPage() {
   }
   const weekStudentIds = Array.from(sessionMap.keys())
 
-  // ── Parallel: competition check + board profiles ──
-  const [compRes, boardProfilesRes] = await Promise.all([
-    topic
+  // ── Parallel: per-class round state + board profiles ──
+  const [roundRes, boardProfilesRes] = await Promise.all([
+    topic && profile.class_section
       ? supabase
-          .from('sessions')
-          .select('id')
-          .eq('student_id', user.id)
+          .from('competition_rounds')
+          .select('is_open, round_number')
           .eq('topic_id', topic.id)
-          .eq('session_type', 'competition')
-          .eq('competition_round', (topic as { competition_round?: number }).competition_round ?? 0)
-          .eq('is_complete', true)
+          .eq('class_section', profile.class_section)
           .maybeSingle()
       : Promise.resolve({ data: null }),
     weekStudentIds.length > 0
@@ -140,6 +137,22 @@ export default async function DashboardPage() {
         })()
       : Promise.resolve({ data: [] }),
   ])
+
+  const competitionOpen  = roundRes.data?.is_open       ?? false
+  const competitionRound = roundRes.data?.round_number   ?? 0
+
+  // ── Competition completion check (scoped to this student's current round) ──
+  const compRes = topic
+    ? await supabase
+        .from('sessions')
+        .select('id')
+        .eq('student_id', user.id)
+        .eq('topic_id', topic.id)
+        .eq('session_type', 'competition')
+        .eq('competition_round', competitionRound)
+        .eq('is_complete', true)
+        .maybeSingle()
+    : { data: null }
 
   const competitionDone      = !!compRes.data
   const competitionSessionId = compRes.data?.id ?? null
@@ -277,7 +290,7 @@ export default async function DashboardPage() {
                 >
                   ✓ Competition Done
                 </Link>
-              ) : (topic as { competition_open?: boolean }).competition_open ? (
+              ) : competitionOpen ? (
                 <Link
                   href={`/session/${topic.id}?mode=competition`}
                   className="inline-flex items-center gap-1.5 bg-amber-500 hover:bg-amber-400 active:scale-95 text-slate-900 font-black text-sm px-4 py-3 rounded-2xl transition-all shadow-lg shadow-amber-500/20"

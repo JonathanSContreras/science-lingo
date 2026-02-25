@@ -27,10 +27,12 @@ export default async function TopicQuestionsPage({
 
   if (!profile || profile.role !== 'teacher') redirect('/dashboard')
 
-  const [topicRes, questionsRes] = await Promise.all([
+  const ALL_SECTIONS = ['8A', '8B', '8C', '8D', '8E', '8F']
+
+  const [topicRes, questionsRes, roundsRes] = await Promise.all([
     supabase
       .from('topics')
-      .select('id, title, standard, is_active, competition_limit, competition_open, competition_round')
+      .select('id, title, standard, is_active, competition_limit')
       .eq('id', topicId)
       .single(),
     supabase
@@ -38,12 +40,22 @@ export default async function TopicQuestionsPage({
       .select('id, question_text, option_a, option_b, option_c, option_d, correct_option, explanation, hint, order_index')
       .eq('topic_id', topicId)
       .order('order_index'),
+    supabase
+      .from('competition_rounds')
+      .select('class_section, is_open, round_number')
+      .eq('topic_id', topicId),
   ])
 
   const topic     = topicRes.data
   const questions = questionsRes.data ?? []
 
   if (!topic) redirect('/teacher/topics')
+
+  // Merge DB rows with all 6 sections (fill missing with defaults)
+  const roundMap = new Map((roundsRes.data ?? []).map((r) => [r.class_section, r]))
+  const rounds = ALL_SECTIONS.map(
+    (s) => roundMap.get(s) ?? { class_section: s, is_open: false, round_number: 0 },
+  )
 
   const nextOrderIndex = questions.length
 
@@ -105,8 +117,7 @@ export default async function TopicQuestionsPage({
         {/* Competition round control */}
         <CompetitionRoundControl
           topicId={topicId}
-          isOpen={topic.competition_open ?? false}
-          round={topic.competition_round ?? 0}
+          rounds={rounds}
         />
 
         {/* Competition settings */}
