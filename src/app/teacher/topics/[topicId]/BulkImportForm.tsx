@@ -121,7 +121,7 @@ export function BulkImportForm({
     startTransition(async () => {
       const res = await bulkAddQuestions(topicId, valid, startOrderIndex)
       if ('error' in res) {
-        setServerError(res.error)
+        setServerError(res.error ?? 'Something went wrong.')
       } else {
         setAddedCount(valid.length)
         setSubmitted(true)
